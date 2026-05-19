@@ -193,8 +193,8 @@ CREATE TABLE audit_log (
 | 2.1 | `POST /api/session/create` — 2 rastgele modül seçimi | Mithatcan | ✅ Tamamlandı |
 | 2.2 | `POST /api/liveness/submit` endpoint | Mithatcan | ✅ Tamamlandı |
 | 2.3 | Session store CRUD (`db/store.py` genişletildi) | Mithatcan | ✅ Tamamlandı |
-| 2.4 | `BlinkDetector` implementasyonu (MediaPipe) | Yusuf | ⬜ Bekliyor |
-| 2.5 | `HeadMovementDetector` implementasyonu (MediaPipe) | Yusuf | ⬜ Bekliyor |
+| 2.4 | `BlinkDetector` implementasyonu (InsightFace 106 landmark) | Yusuf | ✅ Tamamlandı |
+| 2.5 | `HeadMovementDetector` implementasyonu | Yusuf | ✅ Tamamlandı |
 | 2.6 | Test UI `/test-ui` sayfası — modül bazlı test | İsmail | ⬜ Bekliyor |
 | 2.7 | `LivenessChallenge.tsx` bileşeni | İsmail | ⬜ Bekliyor |
 
@@ -381,6 +381,14 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 
     return AccessDecision(granted=True, matched_user=recognition_result.user_id)
 ```
+
+---
+
+## Bilinen Hatalar
+
+| # | Endpoint | Hata | Durum |
+|---|---|---|---|
+| 1 | `POST /liveness/submit` | Browser'dan gönderilen kamera frame'i `500 Internal Server Error` (text/plain) döndürüyor. Python/curl'den çalışıyor. CORS veya frame encoding kaynaklı olabilir. | 🔴 Araştırılacak |
 
 ---
 

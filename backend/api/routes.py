@@ -287,13 +287,20 @@ def get_session(session_id: str) -> SessionStatusResponse:
 
 @router.post("/liveness/submit", response_model=LivenessSubmitResponse, tags=["Liveness"])
 def submit_liveness(body: LivenessSubmitRequest) -> LivenessSubmitResponse:
-    """
-    Submit a camera frame for a liveness challenge.
+    import traceback as _tb
+    try:
+        return _submit_liveness_inner(body)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("UNHANDLED in submit_liveness:\n%s", _tb.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
 
-    Until concrete detector implementations are ready (Sprint 2/3),
-    the result is determined by basic face detection: a detected face = passed.
-    Confidence is derived from the face detection score.
-    """
+
+def _submit_liveness_inner(body: LivenessSubmitRequest) -> LivenessSubmitResponse:
     t0 = time.monotonic()
 
     session = db.get_session(body.session_id)
@@ -312,22 +319,13 @@ def submit_liveness(body: LivenessSubmitRequest) -> LivenessSubmitResponse:
     if img is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot decode frame")
 
-    # ── Liveness değerlendirmesi ──────────────────────────────────────────
-    try:
-        from core.preprocessing import prepare_for_insightface
-        detector = FaceDetector.get_instance()
-        rgb = prepare_for_insightface(img)
-        detection = detector.detect(rgb)
+    from core.preprocessing import prepare_for_insightface
+    detector = FaceDetector.get_instance()
+    rgb = prepare_for_insightface(img)
+    detection = detector.detect(rgb)
 
-        passed = detection.has_face and detection.count == 1
-        confidence = float(detection.single_face.score) if passed else 0.0
-    except Exception as exc:
-        import traceback
-        logger.error("Liveness detection error: %s\n%s", exc, traceback.format_exc())
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Detection error: {type(exc).__name__}: {exc}",
-        )
+    passed = detection.has_face and detection.count == 1
+    confidence = float(detection.single_face.score) if passed else 0.0
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     updated = db.complete_challenge(
@@ -340,7 +338,7 @@ def submit_liveness(body: LivenessSubmitRequest) -> LivenessSubmitResponse:
     })
 
     all_passed = updated["status"] == "completed"
-    instruction = _INSTRUCTIONS.get(body.challenge_name, "Kameraya bakın.")
+    instruction = _INSTRUCTIONS.get(body.challenge_name, "Kameraya bakin.")
 
     return LivenessSubmitResponse(
         challenge_name=body.challenge_name,
