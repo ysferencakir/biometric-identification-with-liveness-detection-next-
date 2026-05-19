@@ -50,6 +50,42 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id                   TEXT PRIMARY KEY,
+                created_at           TEXT NOT NULL,
+                expires_at           TEXT NOT NULL,
+                challenges           TEXT NOT NULL,
+                completed_challenges TEXT NOT NULL DEFAULT '[]',
+                status               TEXT NOT NULL DEFAULT 'active'
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS liveness_challenges (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id     TEXT NOT NULL REFERENCES sessions(id),
+                challenge_name TEXT NOT NULL,
+                passed         INTEGER NOT NULL,
+                confidence     REAL NOT NULL,
+                latency_ms     INTEGER,
+                created_at     TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                event_type TEXT NOT NULL,
+                details    TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
     logger.info("Database initialised at %s", _DB_PATH)
 
