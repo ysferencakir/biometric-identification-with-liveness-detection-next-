@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # How many frames to collect during registration
     REGISTER_FRAMES_REQUIRED: int = 5
 
+    # ── Session & Liveness ────────────────────────────────────────────────
+    SESSION_TTL_SECONDS: int = 300
+    LIVENESS_DETECTORS: list[str] = ["blink", "head_movement", "texture"]
+    LIVENESS_CHALLENGES_COUNT: int = 2
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

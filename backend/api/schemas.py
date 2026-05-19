@@ -86,6 +86,69 @@ class DeleteUserResponse(BaseModel):
     message: str
 
 
+# ── Session ───────────────────────────────────────────────────────────────────
+
+class SessionCreateResponse(BaseModel):
+    session_id: str
+    challenges: List[str]
+    expires_at: str
+
+
+class SessionStatusResponse(BaseModel):
+    session_id: str
+    status: str                    # active | completed | expired | denied
+    challenges: List[str]
+    completed_challenges: List[str]
+    expires_at: str
+
+
+# ── Liveness ──────────────────────────────────────────────────────────────────
+
+class DetectorInfo(BaseModel):
+    name: str
+    instruction: str
+
+
+class LivenessAvailableResponse(BaseModel):
+    detectors: List[DetectorInfo]
+
+
+class LivenessSubmitRequest(BaseModel):
+    session_id: str
+    challenge_name: str
+    frame: str = Field(..., description="Base64-encoded image frame")
+
+
+class LivenessSubmitResponse(BaseModel):
+    challenge_name: str
+    passed: bool
+    confidence: float
+    instruction: str
+    all_challenges_passed: bool
+
+
+# ── Verify ────────────────────────────────────────────────────────────────────
+
+class VerifyRequest(BaseModel):
+    session_id: str
+    frame: str = Field(..., description="Base64-encoded image frame")
+
+
+class LivenessResultSummary(BaseModel):
+    challenge: str
+    passed: bool
+    confidence: float
+
+
+class VerifyResponse(BaseModel):
+    access_granted: bool
+    matched_user: Optional[str]
+    name: Optional[str]
+    recognition_score: float
+    liveness_results: List[LivenessResultSummary]
+    decision_reason: str
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):

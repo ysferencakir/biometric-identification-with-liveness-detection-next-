@@ -39,6 +39,9 @@ requests==2.31.0
 # Pillow>=9.0    (image utils used internally by insightface)
 Pillow>=9.0.0
 
+# ── Liveness Detection ───────────────────────────────────────────────────────
+mediapipe==0.10.35              # BlinkDetector, HeadMovementDetector
+
 # ── Optional: future liveness / ML work ──────────────────────────────────────
 # torch>=2.3.0
 # torchvision>=0.18.0
