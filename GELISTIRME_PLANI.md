@@ -178,10 +178,10 @@ CREATE TABLE audit_log (
 |---|---|---|---|
 | 1.1 | .gitignore güncelle | Mithatcan | ✅ Tamamlandı |
 | 1.2 | DB şeması: sessions, liveness_challenges, audit_log | Mithatcan | ✅ Tamamlandı |
-| 1.3 | API sözleşmelerini belgele (`docs/API_CONTRACT.md`) | Mithatcan | ⬜ Bekliyor |
+| 1.3 | API sözleşmelerini belgele (`docs/API_CONTRACT.md`) | Mithatcan | ✅ Tamamlandı |
 | 1.4 | `core/liveness/base.py` final — NAME + get_instruction() + reset() | Yusuf | ✅ Tamamlandı |
-| 1.5 | Next.js projesi kur (`frontend/`) | İsmail | ⬜ Bekliyor |
-| 1.6 | `CameraFeed.tsx` — getUserMedia temel bileşen | İsmail | ⬜ Bekliyor |
+| 1.5 | Next.js projesi kur (`frontend/`) | İsmail | ✅ Tamamlandı |
+| 1.6 | `CameraFeed.tsx` — getUserMedia temel bileşen | İsmail | ✅ Tamamlandı |
 
 ---
 
@@ -190,9 +190,9 @@ CREATE TABLE audit_log (
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 2.1 | `POST /api/session/create` — 2 rastgele modül seçimi | Mithatcan | ⬜ Bekliyor |
-| 2.2 | `POST /api/liveness/submit` endpoint | Mithatcan | ⬜ Bekliyor |
-| 2.3 | Session store CRUD (`db/session_store.py`) | Mithatcan | ⬜ Bekliyor |
+| 2.1 | `POST /api/session/create` — 2 rastgele modül seçimi | Mithatcan | ✅ Tamamlandı |
+| 2.2 | `POST /api/liveness/submit` endpoint | Mithatcan | ✅ Tamamlandı |
+| 2.3 | Session store CRUD (`db/store.py` genişletildi) | Mithatcan | ✅ Tamamlandı |
 | 2.4 | `BlinkDetector` implementasyonu (MediaPipe) | Yusuf | ⬜ Bekliyor |
 | 2.5 | `HeadMovementDetector` implementasyonu (MediaPipe) | Yusuf | ⬜ Bekliyor |
 | 2.6 | Test UI `/test-ui` sayfası — modül bazlı test | İsmail | ⬜ Bekliyor |
@@ -390,3 +390,5 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 |---|---|---|
 | 2026-05-19 | Plan oluşturuldu, mevcut mimari analiz edildi | Claude Code |
 | 2026-05-19 | Sprint 1 başladı: .gitignore, base.py (NAME+get_instruction+reset), DB tabloları (sessions, liveness_challenges, audit_log) tamamlandı | Claude Code |
+| 2026-05-19 | Sprint 1 tamamlandı: API_CONTRACT.md, Next.js frontend kurulumu, types/api.ts, lib/api.ts, lib/camera.ts, CameraFeed.tsx | Claude Code |
+| 2026-05-19 | Sprint 2 kısmen: /session/create, /liveness/submit, /verify, /liveness/available endpoint'leri + session CRUD + frontend sayfaları (verify, register, test-ui) | Claude Code |

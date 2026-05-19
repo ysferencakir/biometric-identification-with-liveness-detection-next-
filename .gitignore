@@ -62,3 +62,6 @@ performance_reports/
 # OS files
 .DS_Store
 Thumbs.db
+
+# PowerShell geçici çıktılar
+*.output
