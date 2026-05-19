@@ -11,11 +11,13 @@ Startup sequence:
 
 import logging
 import sys
+import traceback
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.routes import router
 from config import settings
@@ -71,14 +73,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS – allow all origins in development; tighten in production
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler — tüm hataları JSON olarak döner
+@app.exception_handler(Exception)
+async def _global_exc(request: Request, exc: Exception) -> JSONResponse:
+    tb = traceback.format_exc()
+    logger.error("Unhandled exception on %s:\n%s", request.url.path, tb)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
 
 app.include_router(router, prefix="/api/v1")
 

@@ -136,7 +136,7 @@ class HeadMovementDetector(LivenessDetectorBase):
                 self._hold_count = 0
 
         completed = len(self._completed) == len(_DIRECTIONS)
-        score     = len(self._completed) / len(_DIRECTIONS)
+        score     = 1.0 if completed else len(self._completed) / len(_DIRECTIONS)
 
         dir_labels = {"right": "saga", "left": "sola"}
         remaining  = [dir_labels[d] for d in _DIRECTIONS if d not in self._completed]

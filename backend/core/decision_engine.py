@@ -1,67 +1,83 @@
 """
 core/decision_engine.py
 ------------------------
-Final access-decision logic.
+Nihai erişim kararı.
 
-TODAY (v0.1 – recognition only):
-  Passes the recognition result straight through.
-
-FUTURE (v0.2 – + liveness):
-  Will combine RecognitionResult + LivenessResult to produce a single
-  AccessDecision.  Plug in your liveness module here without touching
-  recognition.py or the API routes.
-
-Example future usage:
-  decision = decide(recognition_result, liveness_result)
-  if decision.access_granted:
-      ...
+Politika (v0.2):
+  1. Session'daki tüm liveness challenge'ları geçilmiş olmalı.
+  2. Ortalama liveness confidence >= MIN_LIVENESS_CONFIDENCE olmalı.
+  3. Yüz tanıma eşiği geçilmeli (recognized == True).
+  4. Frame'de tek yüz olmalı.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from core.recognition import RecognitionResult
 
 logger = logging.getLogger(__name__)
 
+# ── Politika sabitleri ────────────────────────────────────────────────────────
+MIN_LIVENESS_CONFIDENCE = 0.60   # ortalama liveness skoru bu değerin altındaysa reddet
+MIN_CHALLENGES_REQUIRED = 2      # kaç liveness challenge tamamlanmış olmalı
+
+
+@dataclass
+class LivenessSummary:
+    """Bir session'daki tüm liveness sonuçlarının özeti."""
+    challenges_passed:    list[str]   # geçilen challenge isimleri
+    challenges_failed:    list[str]   # başarısız olanlar
+    avg_confidence:       float       # ortalama güven skoru
+    all_passed:           bool        # tümü geçildi mi
+
 
 @dataclass
 class AccessDecision:
-    """
-    Single unified output of the decision engine.
-    Extends RecognitionResult with an access_granted flag.
-    """
-    access_granted: bool
-    recognition: RecognitionResult
-    # TODO: add LivenessResult here when liveness module is integrated
-    liveness_passed: Optional[bool] = None
-    reason: str = ""
+    """Sistemin nihai erişim kararı."""
+    access_granted:   bool
+    recognition:      RecognitionResult
+    liveness:         Optional[LivenessSummary] = None
+    reason:           str = ""
+
+    # Kısayollar
+    @property
+    def user_id(self) -> Optional[str]:
+        return self.recognition.user_id
+
+    @property
+    def name(self) -> Optional[str]:
+        return self.recognition.name
+
+    @property
+    def recognition_score(self) -> float:
+        return self.recognition.recognition_score
 
 
 def decide(
     recognition: RecognitionResult,
-    # TODO: add liveness_result: Optional[LivenessResult] = None
+    liveness_results: Optional[list[dict]] = None,
 ) -> AccessDecision:
     """
-    Combine recognition (and future liveness) into a final access decision.
+    Recognition + liveness sonuçlarını birleştirip erişim kararı verir.
 
-    Current policy:
-      - access_granted iff recognized == True
-      - liveness is not yet evaluated (always assumed passed)
+    Parameters
+    ----------
+    recognition      : RecognitionResult — yüz tanıma sonucu
+    liveness_results : list[dict] — DB'den gelen liveness_challenges satırları
+                       Her dict: {challenge_name, passed, confidence}
+                       None ise liveness atlanır (geriye dönük uyumluluk).
 
-    When liveness is ready, update the policy here.
+    Returns
+    -------
+    AccessDecision
     """
 
-    # TODO: replace stub with: liveness_passed = liveness_result.is_live if liveness_result else None
-    liveness_passed: Optional[bool] = None
-
-    # Policy
+    # ── 1. Yüz tespiti kontrolleri ────────────────────────────────────────────
     if not recognition.face_detected:
         return AccessDecision(
             access_granted=False,
             recognition=recognition,
-            liveness_passed=liveness_passed,
             reason="No face detected",
         )
 
@@ -69,25 +85,70 @@ def decide(
         return AccessDecision(
             access_granted=False,
             recognition=recognition,
-            liveness_passed=liveness_passed,
             reason="Multiple faces – ambiguous identity",
         )
 
+    # ── 2. Liveness kontrolü ──────────────────────────────────────────────────
+    liveness_summary = None
+
+    if liveness_results is not None:
+        passed_rows   = [r for r in liveness_results if r.get("passed")]
+        failed_rows   = [r for r in liveness_results if not r.get("passed")]
+        passed_names  = [r["challenge_name"] for r in passed_rows]
+        failed_names  = [r["challenge_name"] for r in failed_rows]
+
+        confidences   = [r.get("confidence", 0.0) for r in liveness_results]
+        avg_conf      = sum(confidences) / len(confidences) if confidences else 0.0
+        all_passed    = len(failed_rows) == 0 and len(passed_rows) >= MIN_CHALLENGES_REQUIRED
+
+        liveness_summary = LivenessSummary(
+            challenges_passed=passed_names,
+            challenges_failed=failed_names,
+            avg_confidence=round(avg_conf, 4),
+            all_passed=all_passed,
+        )
+
+        logger.info(
+            "Liveness: passed=%s failed=%s avg_conf=%.3f",
+            passed_names, failed_names, avg_conf,
+        )
+
+        if not all_passed:
+            return AccessDecision(
+                access_granted=False,
+                recognition=recognition,
+                liveness=liveness_summary,
+                reason="Liveness failed",
+            )
+
+        if avg_conf < MIN_LIVENESS_CONFIDENCE:
+            return AccessDecision(
+                access_granted=False,
+                recognition=recognition,
+                liveness=liveness_summary,
+                reason="Low liveness confidence",
+            )
+
+    # ── 3. Biyometrik tanıma kontrolü ─────────────────────────────────────────
     if not recognition.recognized:
         return AccessDecision(
             access_granted=False,
             recognition=recognition,
-            liveness_passed=liveness_passed,
+            liveness=liveness_summary,
             reason="Face not recognised",
         )
 
-    # TODO: also check liveness_passed here once integrated
-    # if liveness_passed is False:
-    #     return AccessDecision(False, recognition, liveness_passed, "Liveness check failed")
+    # ── 4. Erişim ver ─────────────────────────────────────────────────────────
+    logger.info(
+        "ACCESS GRANTED: user=%s score=%.3f liveness_conf=%.3f",
+        recognition.user_id,
+        recognition.recognition_score,
+        liveness_summary.avg_confidence if liveness_summary else -1,
+    )
 
     return AccessDecision(
         access_granted=True,
         recognition=recognition,
-        liveness_passed=liveness_passed,
+        liveness=liveness_summary,
         reason="Recognised",
     )
