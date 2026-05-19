@@ -1,0 +1,44 @@
+# ── Core web framework ────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9        # required for File/Form uploads in FastAPI
+
+# ── Config & validation ───────────────────────────────────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-dotenv==1.0.1
+
+# ── Computer Vision ───────────────────────────────────────────────────────────
+opencv-python==4.9.0.80        # full build with GUI (needed for imshow in scripts)
+numpy==1.26.4
+
+# ── Face Recognition ─────────────────────────────────────────────────────────
+# insightface requires cmake to build native extensions on Windows.
+# Install build tools first:  winget install Microsoft.VisualStudio.2022.BuildTools
+# Then:  pip install cmake  (if not already on PATH)
+insightface==0.7.3
+
+# ── ONNX Runtime (choose ONE, do NOT install both) ────────────────────────────
+#
+# RTX 4070 + CUDA 12.x (recommended for this project):
+#   pip install onnxruntime-gpu==1.18.0
+#
+# CPU-only fallback:
+#   pip install onnxruntime==1.18.0
+#
+# Verify GPU providers after install:
+#   python -c "import onnxruntime; print(onnxruntime.get_available_providers())"
+#   Expected: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+
+# ── HTTP client (used by scripts/) ───────────────────────────────────────────
+requests==2.31.0
+
+# ── InsightFace build dependencies (Windows) ─────────────────────────────────
+# These are pulled automatically by pip but listed here for clarity:
+# cmake          (native build; install separately if pip fails)
+# Pillow>=9.0    (image utils used internally by insightface)
+Pillow>=9.0.0
+
+# ── Optional: future liveness / ML work ──────────────────────────────────────
+# torch>=2.3.0
+# torchvision>=0.18.0
