@@ -17,10 +17,11 @@ Yaw hesabı:
 
 import time
 
-import cv2
 import numpy as np
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
+from core.detection import FaceDetector
+from core.preprocessing import prepare_for_insightface
 
 # 68-point landmark indeksleri
 _LEFT_EYE_OUTER  = 36   # sol göz dış köşe
@@ -84,9 +85,8 @@ class HeadMovementDetector(LivenessDetectorBase):
         timed_out = elapsed > _WINDOW_SECONDS
 
         try:
-            from core.detection import FaceDetector
             detector  = FaceDetector.get_instance()
-            rgb       = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            rgb       = prepare_for_insightface(bgr_frame)
             detection = detector.detect(rgb)
         except Exception as exc:
             return LivenessResult(

@@ -270,10 +270,14 @@ def delete_user(user_id: str) -> DeleteUserResponse:
 @router.get("/liveness/available", response_model=LivenessAvailableResponse, tags=["Liveness"])
 def get_available_detectors() -> LivenessAvailableResponse:
     """List all registered liveness detector modules."""
-    detectors = [
-        DetectorInfo(name=name, instruction=_INSTRUCTIONS.get(name, "Kameraya bakın."))
-        for name in settings.LIVENESS_DETECTORS
-    ]
+    from core.liveness import liveness_manager
+
+    detectors = []
+    for name in liveness_manager.available_methods:
+        detector = liveness_manager._registry.get(name)
+        if detector:
+            instruction = detector.get_instruction()
+            detectors.append(DetectorInfo(name=name, instruction=instruction))
     return LivenessAvailableResponse(detectors=detectors)
 
 
