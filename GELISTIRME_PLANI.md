@@ -330,10 +330,10 @@ Tarayıcı                    Backend
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 6.4 | `POST /voice/challenge` + `POST /voice/submit` endpoint | Mithatcan | 🔄 Devam Ediyor |
-| 6.5 | Whisper/SpeechRecognition kurulumu + ses transkripsiyon | Yusuf | 🔄 Devam Ediyor |
-| 6.6 | Frontend: MediaRecorder + ses kaydı bileşeni | İsmail | 🔄 Devam Ediyor |
-| 6.7 | `VoiceChallenge.tsx` + verify akışına entegre | İsmail | 🔄 Devam Ediyor |
+| 6.4 | `POST /voice/challenge` + `POST /voice/submit` endpoint | Mithatcan | 🔮 Ertelendi |
+| 6.5 | Whisper/SpeechRecognition kurulumu + ses transkripsiyon | Yusuf | 🔮 Ertelendi |
+| 6.6 | Frontend: MediaRecorder + ses kaydı bileşeni | İsmail | 🔮 Ertelendi |
+| 6.7 | `VoiceChallenge.tsx` + verify akışına entegre | İsmail | 🔮 Ertelendi |
 
 ---
 
@@ -500,3 +500,4 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 | 2026-05-19 | Sprint 1 tamamlandı: API_CONTRACT.md, Next.js frontend kurulumu, types/api.ts, lib/api.ts, lib/camera.ts, CameraFeed.tsx | Claude Code |
 | 2026-05-19 | Sprint 2 kısmen: /session/create, /liveness/submit, /verify, /liveness/available endpoint'leri + session CRUD + frontend sayfaları (verify, register, test-ui) | Claude Code |
 | 2026-05-19 | BlinkDetector + HeadMovementDetector tamamlandı. Decision Engine liveness entegrasyonu. Browser 500 hatası çözüldü. Tam E2E akış çalışıyor (Hoşgeldin Yusuf, skor 85.1%) | Claude Code |
+| 2026-05-20 | Sprint 4-5-6: E2E testler (14/14), performans ölçümleri, UI/UX redesign, güvenlik denetimleri, MouthMovementDetector, MiniFASNet denendi (ertelendi), README + API_CONTRACT dokümantasyonu | Claude Code |
