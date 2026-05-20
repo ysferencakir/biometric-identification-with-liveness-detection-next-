@@ -19,6 +19,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 try:
     import mediapipe as mp
     from mediapipe.tasks import python
@@ -26,11 +28,7 @@ try:
     MEDIAPIPE_AVAILABLE = True
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
-    logger.warning(
-        "MediaPipe not found. Install: pip install mediapipe==0.10.35"
-    )
-
-logger = logging.getLogger(__name__)
+    logger.warning("MediaPipe not found. Install: pip install mediapipe")
 
 # Blendshape indeksleri (MediaPipe Face Landmarker 0.10.x)
 BLENDSHAPE_INDEX_EYE_BLINK_LEFT = 9
@@ -100,9 +98,14 @@ class MediaPipeProvider:
     def _get_model_path() -> str:
         """Get path to face_landmarker.task model."""
         backend_dir = Path(__file__).parent.parent.parent  # backend/
-        model_dir = backend_dir / "models"
-        model_dir.mkdir(exist_ok=True)
-        return str(model_dir / "face_landmarker.task")
+        # models/mediapipe/ veya models/ klasörüne bak
+        for path in [
+            backend_dir / "models" / "mediapipe" / "face_landmarker.task",
+            backend_dir / "models" / "face_landmarker.task",
+        ]:
+            if path.exists():
+                return str(path)
+        return str(backend_dir / "models" / "mediapipe" / "face_landmarker.task")
 
     @staticmethod
     def get_instance() -> "MediaPipeProvider":

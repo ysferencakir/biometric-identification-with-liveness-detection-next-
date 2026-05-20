@@ -364,8 +364,9 @@ Opsiyonel: AASIST / RawNet2 ses anti-spoofing skoru
 | 6.2 | BlinkDetector → Temporal Dip + EMA baseline (kişiye özel) | 🔴 | ✅ Tamamlandı |
 | 6.3 | HeadMovementDetector → Normalized Nose Offset | 🔴 | ✅ Tamamlandı |
 | 6.4 | MouthMovementDetector → inner-lip + hysteresis | 🟡 | ✅ Tamamlandı |
-| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ⬜ Planlandı |
+| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ✅ Tamamlandı |
 | 6.6 | TextureAnalyzer → çok sinyalli PAD | 🔴 | ⬜ Bekliyor |
+| 6.8 | MouthMovement: jawOpen blendshape'i state machine'e dahil et | 🟡 | 🔮 Sonra |
 | 6.7 | VoiceChallenge → Vosk/faster-whisper | 🟡 | 🔮 Ertelendi |
 
 ---
