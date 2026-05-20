@@ -220,36 +220,344 @@ CREATE TABLE audit_log (
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 4.1 | E2E: kayıt → liveness × 2 → biyometrik test senaryoları | Mithatcan | ⬜ Bekliyor |
-| 4.2 | FAR/FRR ölçümü ve raporu | Mithatcan | ⬜ Bekliyor |
-| 4.3 | Spoofing test senaryoları (fotoğraf/video/maske) | Yusuf | ⬜ Bekliyor |
-| 4.4 | Eşik optimizasyonu (`utils/constants.py`) | Yusuf | ⬜ Bekliyor |
-| 4.5 | Cross-browser test (Chrome/Edge/Firefox) | İsmail | ⬜ Bekliyor |
-| 4.6 | UI/UX iyileştirmeler | İsmail | ⬜ Bekliyor |
+| 4.1 | E2E: kayıt → liveness × 2 → biyometrik test senaryoları | Mithatcan | ✅ Tamamlandı (14/14 PASSED) |
+| 4.2 | FAR/FRR ölçümü ve raporu | Mithatcan | ✅ Tamamlandı (session:25ms liveness:422ms recognize:388ms) |
+| 4.3 | Spoofing test senaryoları (fotoğraf/video/maske) | Yusuf | ⏭️ Atlandı |
+| 4.4 | Eşik optimizasyonu (`utils/constants.py`) | Yusuf | ⏭️ Atlandı |
+| 4.5 | Cross-browser test (Chrome/Edge/Firefox) | İsmail | ⏭️ Atlandı |
+| 4.6 | UI/UX iyileştirmeler | İsmail | ✅ Tamamlandı |
+| 4.7 | `TextureAnalyzer` — MiniFASNet denendi, domain shift sorunu (webcam ↔ eğitim verisi uyumsuzluğu). Havuzdan çıkarıldı. | Yusuf | 🔴 Sprint 5'e taşındı |
 
 ---
 
-### Sprint 5 — Web Arayüzü & Entegrasyon
+### Sprint 5 — Gelişmiş Özellikler & Bütünleştirme
+
+**TextureAnalyzer için uygun algoritma arayışı:**
+- MiniFASNet: domain shift nedeniyle çalışmadı
+- Denenecekler: FFT piksel grid tespiti + lokal varyans hybrid, DepthFAS, FAS-TD, domain adaptation ile fine-tune
+
+---
+
+### Sprint 5 — Web Arayüzü & Entegrasyon (eski)
 **Tarih:** 19.02.2026 – 30.03.2026 (40 gün)
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 5.1 | Güvenlik denetimleri + güvenlik açığı kapatma | Mithatcan | ⬜ Bekliyor |
-| 5.2 | Loglama sistemi doğrulaması | Mithatcan | ⬜ Bekliyor |
-| 5.3 | MicroExpression modülü (opsiyonel — v2) | Yusuf | ⬜ Bekliyor |
-| 5.4 | `/register` sayfası polish | İsmail | ⬜ Bekliyor |
+| 5.1 | Güvenlik denetimleri + güvenlik açığı kapatma | Mithatcan | ✅ Tamamlandı |
+| 5.2 | Loglama sistemi doğrulaması | Mithatcan | ✅ Tamamlandı (24 grant, 8 deny, 712 challenge) |
+| 5.3 | MicroExpression modülü (opsiyonel — v2) | Yusuf | 🔮 İlerde Yapılacak |
+| 5.4 | `/register` sayfası polish | İsmail | ✅ Tamamlandı (UI/UX sprint 4.6'da yapıldı) |
 | 5.5 | Danışmana demo sunumu | Tüm ekip | ⬜ Bekliyor |
 
 ---
 
-### Sprint 6 — Gelişmiş Test & Bütünleştirme
+### Araştırma Bulguları — Adaptasyon Planı
+
+> Kaynak: Deep Research Report (2026-05-20)
+
+#### Özet Bulgular
+
+| Modül | Mevcut Sorun | Önerilen Çözüm | Öncelik |
+|---|---|---|---|
+| BlinkDetector | Sabit EAR eşiği (0.23) — yavaş kırpanlarda başarısız | Adaptive Modified EAR + state machine (kişiye özel kalibrasyon) | 🔴 Yüksek |
+| HeadMovementDetector | Oran tabanlı yaw proxy — kamera açısına bağımlı | OpenCV solvePnP / solvePnPRefineLM | 🔴 Yüksek |
+| MouthMovementDetector | Landmark indeksleri görsel doğrulanmadı | Inner-lip aperture + hysteresis + indeks overlay doğrulama | 🟡 Orta |
+| TextureAnalyzer | Domain shift (MiniFASNet) | MobileNetV3 hafif PAD + replay heuristics | 🔴 Yüksek |
+| VoiceChallenge | Henüz yok | Vosk Turkish (dar vocab) / faster-whisper small int8 | 🟡 Orta |
+
+---
+
+#### 3 Aşamalı Adaptasyon Yol Haritası
+
+**AŞAMA 1 — Yeni model indirmeden iyileştirme**
+```
+BlinkDetector:
+  - İlk 1-2 saniyede açık göz EAR istatistiklerini topla
+  - Kişiye özel üst/alt kuantilden eşik türet
+  - Sabit 0.23 yerine dinamik eşik
+  - "açık→kapalı→açık" state machine (tek frame eşik değil)
+
+HeadMovementDetector:
+  - Mevcut landmark_3d_68 kullanarak OpenCV solvePnP
+  - Stabil 6 nokta: burun ucu, göz köşeleri, ağız köşeleri, çene
+  - Yaw/pitch/roll değerlerini oran yerine derece cinsinden ölç
+  - solvePnPRansac + solvePnPRefineLM ile kararlı poz
+
+MouthMovementDetector:
+  - Overlay scripti ile landmark indekslerini görsel doğrula
+  - Outer-lip yerine inner-lip (60-67) aperture kullan
+  - İki eşikli hysteresis + kısa temporal smoothing ekle
+```
+
+**AŞAMA 2 — MediaPipe entegrasyonu**
+```
+Liveness için MediaPipe Face Landmarker ekle:
+  - 478 3B landmark + blendshape + transformation matrix
+  - InsightFace: SADECE yüz tanıma için (değişmez)
+  - MediaPipe: SADECE liveness için (paralel çalışır)
+  
+Avantajlar:
+  - Blink: iris normalize eyelid aperture (göz boyutundan bağımsız)
+  - Mouth: jawOpen blendshape skoru (landmark indeksine mahkum değil)
+  - Head: facial transformation matrix (solvePnP kalibrasyonu gerekmez)
+  
+Kurulum: pip install mediapipe (0.10.x → tasks API)
+Model: face_landmarker.task (~30MB)
+CPU tahmini: 10-25ms/frame
+```
+
+**AŞAMA 3 — Çok sinyalli PAD (TextureAnalyzer yeniden yazma)**
+```
+4 bileşenli karar motoru:
+
+1. Hafif RGB PAD skoru
+   - MobileNetV3 tabanlı light-weight-face-anti-spoofing
+   - MiniFASNet yardımcı skor olarak kalabilir
+   - kendi webcam verimizle fine-tune edilebilir
+
+2. Replay/print heuristics
+   - Moiré/frekans band anormalliği (FFT)
+   - Ekran/kağıt kenar tespiti
+   - Aşırı speküler glare
+   - Düşük mikrodoku çeşitliliği
+
+3. Geometry challenge consistency
+   - "sağa bak → kırp → ağzını aç" sırasının gerçekten görülüp görülmediği
+   - solvePnP + blink + mouth state tutarlılığı
+
+4. Capture quality gate
+   - Blur, yüz boyutu, pozlama, kırpma kalitesi kötüyse PAD kararı üretme
+
+Veri seti önerileri (fine-tuning için):
+  - CelebA-Spoof (625K görüntü, 10K kişi)
+  - OULU-NPU (mobil ön kamera, farklı cihaz)
+  - CASIA-SURF CeFA (3D saldırılar dahil)
+  - UniAttackData (CVPR 2024, 28K video, 14 saldırı türü)
+```
+
+**VoiceChallenge Planı**
+```
+Dar vocabulary (sayılar): Vosk Turkish + grammar constraint
+  - ~50MB model, ~300MB RAM
+  - <300ms latency
+
+Geniş vocabulary: faster-whisper small int8
+  - CPU'da daha hızlı, int8 quantization
+  - Türkçe için "small" tercih edilmeli
+
+Ses + görüntü senkronizasyonu:
+  - Kullanıcı konuşurken ağız hareketi var mı?
+  - Ses enerjisi ile jaw motion kabaca hizalı mı?
+  - → Replay/TTS saldırılarına karşı ek güvence
+
+Opsiyonel: AASIST / RawNet2 ses anti-spoofing skoru
+  - Hard reject değil, risk artırıcı sinyal olarak
+```
+
+---
+
+#### Sprint 6 Görev Güncellemesi
+
+| # | Görev | Öncelik | Kaynak |
+|---|---|---|---|
+| 6.1 | ✅ MouthMovementDetector (temel) | — | Tamamlandı |
+| 6.2 | BlinkDetector → Temporal Dip + EMA baseline (kişiye özel) | 🔴 | ✅ Tamamlandı |
+| 6.3 | HeadMovementDetector → Normalized Nose Offset | 🔴 | ✅ Tamamlandı |
+| 6.4 | MouthMovementDetector → inner-lip + hysteresis | 🟡 | ✅ Tamamlandı |
+| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ⬜ Planlandı |
+| 6.6 | TextureAnalyzer → çok sinyalli PAD | 🔴 | ⬜ Bekliyor |
+| 6.7 | VoiceChallenge → Vosk/faster-whisper | 🟡 | 🔮 Ertelendi |
+
+---
+
+#### 6.5 MediaPipe Güçlendirme Planı
+
+**Neden MediaPipe?**
+- InsightFace `landmark_3d_68` → 68 nokta, yeterli ama sınırlı
+- MediaPipe Face Landmarker → 478 nokta + blendshape + iris/pupil refinement
+- Blink için iris normalize eyelid aperture → kişiden kişiye değişmiyor
+- Mouth için `jawOpen` blendshape skoru → sparse landmark hatalarından bağımsız
+- Head için `facial_transformation_matrix` → solvePnP kalibrasyonu gerekmez
+
+**Mimari (InsightFace korunur):**
+```
+Frame gelir
+  │
+  ├── InsightFace (buffalo_l)  →  Yüz Tanıma + Embedding (DEĞİŞMEZ)
+  │
+  └── MediaPipe Face Landmarker  →  Liveness sinyalleri
+        ├── 478 landmark
+        ├── blendshape skorları (jawOpen, eyeBlinkLeft, eyeBlinkRight...)
+        └── facial_transformation_matrix (baş pozu)
+```
+
+**Kurulum:**
+```bash
+pip install mediapipe  # zaten kurulu ama solutions API kaldırılmış
+# Yeni tasks API için model dosyası gerekiyor (~30MB)
+# face_landmarker.task — MediaPipe model zoo'dan indirilir
+```
+
+**Model indirme:**
+```bash
+wget -q https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+```
+
+**Ortak MediaPipe provider katmanı:**
+```python
+# core/liveness/mediapipe_provider.py
+# Her detector bu provider'dan sonuç alır (tekrar yükleme yok)
+# Singleton — model bir kez yüklenir
+
+class MediaPipeProvider:
+    NAME = "mediapipe_provider"
+
+    def get(self, bgr_frame) -> FaceLandmarkerResult:
+        # tasks API ile 478 landmark + blendshape
+        ...
+
+    def blink_score(self, result) -> tuple[float, float]:
+        # sol/sağ göz blendshape skoru
+        # eyeBlinkLeft, eyeBlinkRight → 0=açık, 1=kapalı
+
+    def jaw_open_score(self, result) -> float:
+        # jawOpen blendshape → 0=kapalı, 1=açık
+
+    def head_yaw(self, result) -> float:
+        # facial_transformation_matrix → yaw açısı (derece)
+```
+
+**Güçlendirilmiş modüller:**
+
+| Modül | Mevcut sinyal | MediaPipe ile ek sinyal | Beklenen iyileştirme |
+|---|---|---|---|
+| `BlinkDetector` | EMA EAR dip (%15) | `eyeBlinkLeft/Right` blendshape | Iris normalize → kişiden bağımsız |
+| `HeadMovementDetector` | Burun offset normalize | `facial_transformation_matrix` yaw | Kamera açısından tamamen bağımsız |
+| `MouthMovementDetector` | Inner-lip MAR hysteresis | `jawOpen` blendshape | Sparse landmark hatasından kurtulur |
+
+**Ensemble kararı:**
+```python
+# Her challenge için iki sinyal → weighted average
+blink_score  = 0.4 * ear_dip + 0.6 * mediapipe_blink
+head_score   = 0.3 * nose_offset + 0.7 * mp_yaw
+mouth_score  = 0.4 * mar_hysteresis + 0.6 * mp_jaw_open
+```
+
+**Görev listesi:**
+```
+6.5.1  face_landmarker.task modelini indir
+6.5.2  core/liveness/mediapipe_provider.py oluştur
+6.5.3  BlinkDetector: blendshape ensemble ekle
+6.5.4  HeadMovementDetector: transformation matrix yaw ekle
+6.5.5  MouthMovementDetector: jawOpen ensemble ekle
+6.5.6  Test: 3 modül ayrı ayrı webcam testi
+6.5.7  Performans ölçümü: <500ms hedefi korunuyor mu?
+```
+
+**Risk:**
+- MediaPipe 0.10.x `solutions` API yok → `tasks` API kullanılmalı
+- `face_landmarker.task` ~30MB model dosyası — .gitignore'a eklenecek
+- CPU overhead: MediaPipe + InsightFace birlikte ~400-500ms olabilir
+
+---
+
+### Sprint 6 — Yeni Liveness Modülleri
+
 **Tarih:** 31.03.2026 – 25.04.2026 (26 gün)
+
+#### MouthMovementDetector Planı
+
+**Yöntem:** InsightFace `landmark_3d_68` — ağız landmark'ları
+
+```
+68-point model ağız indeksleri:
+  Dış dudak: 48-59
+  İç dudak:  60-67
+
+MAR (Mouth Aspect Ratio):
+  A = ||p51 - p59||  (dikey - üst-alt)
+  B = ||p53 - p57||  (dikey - orta)
+  C = ||p48 - p54||  (yatay)
+  MAR = (A + B) / (2 * C)
+
+  Ağız kapalı: MAR ≈ 0.3-0.5
+  Ağız açık:   MAR > 0.6
+```
+
+**Challenge:** "Lütfen ağzınızı açın ve kapatın." (2 kez)
+- Fotoğraf/ekran: MAR sabit kalır → FAIL
+- Gerçek yüz: MAR dalgalanır → PASS
+
+**Gereksinim:** Sadece `landmark_3d_68` — ekstra kurulum yok
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 6.1 | 3D maske saldırı simülasyonları | Yusuf | ⬜ Bekliyor |
-| 6.2 | Performans darboğazı analizi (FPS/latency) | Mithatcan | ⬜ Bekliyor |
-| 6.3 | Entegrasyon sorunlarının giderilmesi | Tüm ekip | ⬜ Bekliyor |
+| 6.1 | `MouthMovementDetector` implementasyonu (MAR, 68-point) | Yusuf | ✅ Tamamlandı |
+| 6.2 | Test scripti + webcam doğrulama | Yusuf | ✅ Tamamlandı |
+| 6.3 | Manager'a register + config güncelleme | Yusuf | ✅ Tamamlandı |
+
+---
+
+#### VoiceChallengeVerification Planı
+
+**Mimari:**
+
+```
+Tarayıcı                    Backend
+   │                           │
+   ├─ getUserMedia(audio) ──►  │
+   │  (MediaRecorder API)      │
+   │                           │
+   ├─ GET /voice/challenge ──► │ Rastgele kelime/sayı üret
+   │  ◄── {text: "yedi üç"}   │ (örn: "yedi üç")
+   │                           │
+   │  Kullanıcı konuşur        │
+   │                           │
+   ├─ POST /voice/submit ────► │ Audio (WebM/OGG)
+   │  {session_id, audio_b64} │
+   │                           ├─ Whisper/SpeechRecognition
+   │                           │   → transkript
+   │                           │
+   │  ◄── {passed, transcript} │ Karşılaştır
+```
+
+**Backend:**
+- `pip install openai-whisper` (küçük model, CPU'da çalışır)
+- Alternatif: `SpeechRecognition` + Google Web Speech API (internet gerektirir)
+- Challenge: rastgele 2-3 rakam/kelime (Türkçe)
+
+**Frontend:**
+- `MediaRecorder API` ile ses kaydı (3 saniye)
+- Base64 encode → backend'e gönder
+- Ekranda "Söyleyin: yedi üç" göster
+
+**Zorluklar:**
+- Whisper kurulumu büyük (~150MB model)
+- Türkçe tanıma için `whisper small` veya `medium` modeli
+- Arka plan gürültüsü hassasiyeti
+
+**Gereksinim:** `openai-whisper` veya `SpeechRecognition`
+
+| # | Görev | Sorumlu | Durum |
+|---|---|---|---|
+| 6.4 | `POST /voice/challenge` + `POST /voice/submit` endpoint | Mithatcan | 🔮 Ertelendi |
+| 6.5 | Whisper/SpeechRecognition kurulumu + ses transkripsiyon | Yusuf | 🔮 Ertelendi |
+| 6.6 | Frontend: MediaRecorder + ses kaydı bileşeni | İsmail | 🔮 Ertelendi |
+| 6.7 | `VoiceChallenge.tsx` + verify akışına entegre | İsmail | 🔮 Ertelendi |
+
+---
+
+#### Öncelik Sırası
+
+```
+1. MouthMovementDetector  ← ÖNCE (sadece landmark, kolay)
+2. VoiceChallengeVerification ← SONRA (ses altyapısı gerekli)
+```
+
+| # | Görev | Sorumlu | Durum |
+|---|---|---|---|
+| 6.8 | 3D maske saldırı simülasyonları | Yusuf | ⬜ Bekliyor |
+| 6.9 | Performans darboğazı analizi | Mithatcan | ⬜ Bekliyor |
 
 ---
 
@@ -389,6 +697,7 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 | # | Endpoint | Hata | Durum |
 |---|---|---|---|
 | 1 | `POST /liveness/submit` | Browser 500 hatası — `allow_credentials=False` + global exception handler ile çözüldü. | ✅ Çözüldü |
+| 2 | `TextureAnalyzer` | Eğitim verisi olmadan saf LBP eşik tespiti yüksek kaliteli ekran/baskı spoofing'e karşı sınırlı. Sprint 4'te CNN tabanlı model ile güçlendirilecek. | 🟡 Bilinen Kısıt |
 
 ---
 
@@ -401,3 +710,4 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 | 2026-05-19 | Sprint 1 tamamlandı: API_CONTRACT.md, Next.js frontend kurulumu, types/api.ts, lib/api.ts, lib/camera.ts, CameraFeed.tsx | Claude Code |
 | 2026-05-19 | Sprint 2 kısmen: /session/create, /liveness/submit, /verify, /liveness/available endpoint'leri + session CRUD + frontend sayfaları (verify, register, test-ui) | Claude Code |
 | 2026-05-19 | BlinkDetector + HeadMovementDetector tamamlandı. Decision Engine liveness entegrasyonu. Browser 500 hatası çözüldü. Tam E2E akış çalışıyor (Hoşgeldin Yusuf, skor 85.1%) | Claude Code |
+| 2026-05-20 | Sprint 4-5-6: E2E testler (14/14), performans ölçümleri, UI/UX redesign, güvenlik denetimleri, MouthMovementDetector, MiniFASNet denendi (ertelendi), README + API_CONTRACT dokümantasyonu | Claude Code |

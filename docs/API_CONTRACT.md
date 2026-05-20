@@ -1,7 +1,9 @@
 
 # API Sözleşmesi
 
-> **Versiyon:** 0.2
+> **Versiyon:** 0.3  
+> **Son Güncelleme:** 2026-05-20  
+> **Değişiklikler:** MouthMovementDetector eklendi, güvenlik validasyonları güncellendi
 > **Base URL:** `http://localhost:8000/api/v1`
 > **Son Güncelleme:** 2026-05-19
 

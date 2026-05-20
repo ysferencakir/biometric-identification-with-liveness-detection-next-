@@ -114,9 +114,10 @@ class LivenessAvailableResponse(BaseModel):
 
 
 class LivenessSubmitRequest(BaseModel):
-    session_id: str
-    challenge_name: str
-    frame: str = Field(..., description="Base64-encoded image frame")
+    session_id:     str = Field(..., min_length=8,  max_length=64)
+    challenge_name: str = Field(..., min_length=1,  max_length=64, pattern=r'^[a-z_]+$')
+    frame:          str = Field(..., min_length=100, max_length=5_000_000,
+                                description="Base64-encoded image frame")
 
 
 class LivenessSubmitResponse(BaseModel):
@@ -130,8 +131,9 @@ class LivenessSubmitResponse(BaseModel):
 # ── Verify ────────────────────────────────────────────────────────────────────
 
 class VerifyRequest(BaseModel):
-    session_id: str
-    frame: str = Field(..., description="Base64-encoded image frame")
+    session_id: str = Field(..., min_length=8, max_length=64)
+    frame:      str = Field(..., min_length=100, max_length=5_000_000,
+                            description="Base64-encoded image frame")
 
 
 class LivenessResultSummary(BaseModel):

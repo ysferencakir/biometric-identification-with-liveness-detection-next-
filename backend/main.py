@@ -17,7 +17,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routes import router
 from config import settings
@@ -73,6 +75,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Body size limiti — 10 MB (base64 frame ~200KB, kayıt ~500KB)
+MAX_BODY = 10 * 1024 * 1024  # 10 MB
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_BODY:
+            return JSONResponse(status_code=413, content={"detail": "Request body too large (max 10MB)"})
+        return await call_next(request)
+
+app.add_middleware(BodySizeLimitMiddleware)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -82,14 +96,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global exception handler — tüm hataları JSON olarak döner
+# Global exception handler — stacktrace sadece loga yazılır, kullanıcıya ifşa edilmez
 @app.exception_handler(Exception)
 async def _global_exc(request: Request, exc: Exception) -> JSONResponse:
-    tb = traceback.format_exc()
-    logger.error("Unhandled exception on %s:\n%s", request.url.path, tb)
+    logger.error("Unhandled exception on %s: %s\n%s",
+                 request.url.path, exc, traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": f"{type(exc).__name__}: {exc}"},
+        content={"detail": "Internal server error"},  # detay ifşa edilmiyor
     )
 
 app.include_router(router, prefix="/api/v1")
