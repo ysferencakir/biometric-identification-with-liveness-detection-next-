@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # ── Session & Liveness ────────────────────────────────────────────────
     SESSION_TTL_SECONDS: int = 300
-    LIVENESS_DETECTORS: list[str] = ["blink", "head_movement"]
+    LIVENESS_DETECTORS: list[str] = ["blink", "head_movement", "mouth_movement"]
     LIVENESS_CHALLENGES_COUNT: int = 2
 
     model_config = SettingsConfigDict(

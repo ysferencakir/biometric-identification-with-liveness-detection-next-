@@ -251,14 +251,103 @@ CREATE TABLE audit_log (
 
 ---
 
-### Sprint 6 — Gelişmiş Test & Bütünleştirme
+### Sprint 6 — Yeni Liveness Modülleri
+
 **Tarih:** 31.03.2026 – 25.04.2026 (26 gün)
+
+#### MouthMovementDetector Planı
+
+**Yöntem:** InsightFace `landmark_3d_68` — ağız landmark'ları
+
+```
+68-point model ağız indeksleri:
+  Dış dudak: 48-59
+  İç dudak:  60-67
+
+MAR (Mouth Aspect Ratio):
+  A = ||p51 - p59||  (dikey - üst-alt)
+  B = ||p53 - p57||  (dikey - orta)
+  C = ||p48 - p54||  (yatay)
+  MAR = (A + B) / (2 * C)
+
+  Ağız kapalı: MAR ≈ 0.3-0.5
+  Ağız açık:   MAR > 0.6
+```
+
+**Challenge:** "Lütfen ağzınızı açın ve kapatın." (2 kez)
+- Fotoğraf/ekran: MAR sabit kalır → FAIL
+- Gerçek yüz: MAR dalgalanır → PASS
+
+**Gereksinim:** Sadece `landmark_3d_68` — ekstra kurulum yok
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 6.1 | 3D maske saldırı simülasyonları | Yusuf | ⬜ Bekliyor |
-| 6.2 | Performans darboğazı analizi (FPS/latency) | Mithatcan | ⬜ Bekliyor |
-| 6.3 | Entegrasyon sorunlarının giderilmesi | Tüm ekip | ⬜ Bekliyor |
+| 6.1 | `MouthMovementDetector` implementasyonu (MAR, 68-point) | Yusuf | ✅ Tamamlandı |
+| 6.2 | Test scripti + webcam doğrulama | Yusuf | ✅ Tamamlandı |
+| 6.3 | Manager'a register + config güncelleme | Yusuf | ✅ Tamamlandı |
+
+---
+
+#### VoiceChallengeVerification Planı
+
+**Mimari:**
+
+```
+Tarayıcı                    Backend
+   │                           │
+   ├─ getUserMedia(audio) ──►  │
+   │  (MediaRecorder API)      │
+   │                           │
+   ├─ GET /voice/challenge ──► │ Rastgele kelime/sayı üret
+   │  ◄── {text: "yedi üç"}   │ (örn: "yedi üç")
+   │                           │
+   │  Kullanıcı konuşur        │
+   │                           │
+   ├─ POST /voice/submit ────► │ Audio (WebM/OGG)
+   │  {session_id, audio_b64} │
+   │                           ├─ Whisper/SpeechRecognition
+   │                           │   → transkript
+   │                           │
+   │  ◄── {passed, transcript} │ Karşılaştır
+```
+
+**Backend:**
+- `pip install openai-whisper` (küçük model, CPU'da çalışır)
+- Alternatif: `SpeechRecognition` + Google Web Speech API (internet gerektirir)
+- Challenge: rastgele 2-3 rakam/kelime (Türkçe)
+
+**Frontend:**
+- `MediaRecorder API` ile ses kaydı (3 saniye)
+- Base64 encode → backend'e gönder
+- Ekranda "Söyleyin: yedi üç" göster
+
+**Zorluklar:**
+- Whisper kurulumu büyük (~150MB model)
+- Türkçe tanıma için `whisper small` veya `medium` modeli
+- Arka plan gürültüsü hassasiyeti
+
+**Gereksinim:** `openai-whisper` veya `SpeechRecognition`
+
+| # | Görev | Sorumlu | Durum |
+|---|---|---|---|
+| 6.4 | `POST /voice/challenge` + `POST /voice/submit` endpoint | Mithatcan | 🔄 Devam Ediyor |
+| 6.5 | Whisper/SpeechRecognition kurulumu + ses transkripsiyon | Yusuf | 🔄 Devam Ediyor |
+| 6.6 | Frontend: MediaRecorder + ses kaydı bileşeni | İsmail | 🔄 Devam Ediyor |
+| 6.7 | `VoiceChallenge.tsx` + verify akışına entegre | İsmail | 🔄 Devam Ediyor |
+
+---
+
+#### Öncelik Sırası
+
+```
+1. MouthMovementDetector  ← ÖNCE (sadece landmark, kolay)
+2. VoiceChallengeVerification ← SONRA (ses altyapısı gerekli)
+```
+
+| # | Görev | Sorumlu | Durum |
+|---|---|---|---|
+| 6.8 | 3D maske saldırı simülasyonları | Yusuf | ⬜ Bekliyor |
+| 6.9 | Performans darboğazı analizi | Mithatcan | ⬜ Bekliyor |
 
 ---
 
