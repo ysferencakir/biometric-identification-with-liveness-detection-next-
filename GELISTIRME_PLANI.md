@@ -243,10 +243,10 @@ CREATE TABLE audit_log (
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 5.1 | Güvenlik denetimleri + güvenlik açığı kapatma | Mithatcan | ⬜ Bekliyor |
-| 5.2 | Loglama sistemi doğrulaması | Mithatcan | ⬜ Bekliyor |
-| 5.3 | MicroExpression modülü (opsiyonel — v2) | Yusuf | ⬜ Bekliyor |
-| 5.4 | `/register` sayfası polish | İsmail | ⬜ Bekliyor |
+| 5.1 | Güvenlik denetimleri + güvenlik açığı kapatma | Mithatcan | ✅ Tamamlandı |
+| 5.2 | Loglama sistemi doğrulaması | Mithatcan | ✅ Tamamlandı (24 grant, 8 deny, 712 challenge) |
+| 5.3 | MicroExpression modülü (opsiyonel — v2) | Yusuf | 🔮 İlerde Yapılacak |
+| 5.4 | `/register` sayfası polish | İsmail | ✅ Tamamlandı (UI/UX sprint 4.6'da yapıldı) |
 | 5.5 | Danışmana demo sunumu | Tüm ekip | ⬜ Bekliyor |
 
 ---
