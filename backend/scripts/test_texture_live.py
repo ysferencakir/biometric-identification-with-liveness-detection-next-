@@ -37,8 +37,6 @@ while True:
     cv2.imshow("TextureAnalyzer Test", frame)
     key = cv2.waitKey(1) & 0xFF
     if key == ord("q"): break
-    if result.challenge_completed:
-        cv2.waitKey(2000); break
 
 cap.release()
 cv2.destroyAllWindows()

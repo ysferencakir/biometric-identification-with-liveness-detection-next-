@@ -226,6 +226,7 @@ CREATE TABLE audit_log (
 | 4.4 | Eşik optimizasyonu (`utils/constants.py`) | Yusuf | ⬜ Bekliyor |
 | 4.5 | Cross-browser test (Chrome/Edge/Firefox) | İsmail | ⬜ Bekliyor |
 | 4.6 | UI/UX iyileştirmeler | İsmail | ⬜ Bekliyor |
+| 4.7 | `TextureAnalyzer` — MiniFASNet/CNN tabanlı model ile yeniden yaz (LBP eşik yetersiz, ekran spoofing'i yakalayamıyor) | Yusuf | ⬜ Bekliyor |
 
 ---
 
@@ -389,6 +390,7 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 | # | Endpoint | Hata | Durum |
 |---|---|---|---|
 | 1 | `POST /liveness/submit` | Browser 500 hatası — `allow_credentials=False` + global exception handler ile çözüldü. | ✅ Çözüldü |
+| 2 | `TextureAnalyzer` | Eğitim verisi olmadan saf LBP eşik tespiti yüksek kaliteli ekran/baskı spoofing'e karşı sınırlı. Sprint 4'te CNN tabanlı model ile güçlendirilecek. | 🟡 Bilinen Kısıt |
 
 ---
 
