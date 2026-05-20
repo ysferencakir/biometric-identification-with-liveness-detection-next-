@@ -1,23 +1,18 @@
 """
 core/liveness/mouth_movement.py
 ---------------------------------
-Ağız hareketi tabanlı liveness tespiti.
+Ağız hareketi tabanlı liveness — Inner-lip aperture + hysteresis.
 
-Yöntem:
-  - InsightFace landmark_3d_68 kullanılır (zaten yüklü).
-  - MAR (Mouth Aspect Ratio) hesaplanır.
-  - Kullanıcıdan ağzını 2 kez açıp kapatması istenir.
-  - Fotoğraf/ekran: MAR sabit kalır → FAIL
-  - Gerçek yüz: MAR dalgalanır → PASS
+Yöntem (v2 — Araştırma raporu adaptasyonu):
+  - Outer-lip yerine INNER-lip (60-67) aperture kullanılır
+  - Yatay normalizasyon: ağız köşeleri arası mesafe (48-54)
+  - İki eşikli hysteresis: aç eşiği > kapat eşiği (gürültü filtresi)
+  - CONSEC_FRAMES ardışık frame tutmalı
+  - 15 saniyede MIN_OPEN_CLOSE kez açıp kapama → passed=True
 
-MAR formülü:
-  A = ||p51 - p59||  (üst-alt dikey)
-  B = ||p53 - p57||  (üst-alt dikey orta)
-  C = ||p48 - p54||  (yatay genişlik)
-  MAR = (A + B) / (2 * C)
-
-  Ağız kapalı ≈ 0.3-0.5
-  Ağız açık   > 0.6
+68-point inner lip indeksleri (iBUG/300-W):
+  60: sol iç köşe, 61: üst sol, 62: üst orta, 63: üst sağ
+  64: sağ iç köşe, 65: alt sağ, 66: alt orta, 67: alt sol
 """
 
 import time
@@ -28,34 +23,38 @@ from core.liveness.base import LivenessDetectorBase, LivenessResult
 from core.detection import FaceDetector
 from core.preprocessing import prepare_for_insightface
 
-# 68-point ağız landmark indeksleri
-_OUTER_TOP    = 51   # üst dış orta
-_OUTER_BOTTOM = 59   # alt dış orta
-_INNER_TOP    = 53   # üst dış sağ
-_INNER_BOTTOM = 57   # alt dış sağ
-_LEFT_CORNER  = 48   # sol köşe
-_RIGHT_CORNER = 54   # sağ köşe
+# Inner lip landmark indeksleri (68-point şeması)
+_INNER_TOP    = 62   # üst iç orta
+_INNER_BOTTOM = 66   # alt iç orta
 
-_OPEN_THRESHOLD  = 0.55   # MAR bu değerin üstü = ağız açık
-_CLOSE_THRESHOLD = 0.40   # MAR bu değerin altı = ağız kapalı
-_CONSEC_FRAMES   = 2      # kaç ardışık frame aynı durumda olmalı
-_MIN_OPEN_CLOSE  = 2      # kaç kez açıp kapama
-_WINDOW_SECONDS  = 15.0
+# Outer lip köşeleri (yatay normalizasyon için)
+_OUTER_LEFT  = 48
+_OUTER_RIGHT = 54
+
+# Hysteresis eşikleri
+OPEN_THRESHOLD  = 0.30   # MAR bu değerin üstü → ağız açılıyor
+CLOSE_THRESHOLD = 0.15   # MAR bu değerin altı → ağız kapandı
+CONSEC_FRAMES   = 2
+MIN_OPEN_CLOSE  = 2
+WINDOW_SECONDS  = 15.0
 
 
-def _mar(landmarks: np.ndarray) -> float:
-    """Mouth Aspect Ratio hesapla."""
-    p = landmarks[:, :2]   # sadece x,y
-    A = np.linalg.norm(p[_OUTER_TOP] - p[_OUTER_BOTTOM])
-    B = np.linalg.norm(p[_INNER_TOP] - p[_INNER_BOTTOM])
-    C = np.linalg.norm(p[_LEFT_CORNER] - p[_RIGHT_CORNER])
-    return float((A + B) / (2.0 * C + 1e-6))
+def _mar_inner(landmarks: np.ndarray) -> float:
+    """
+    Inner-lip Mouth Aspect Ratio.
+    Dikey: üst-alt iç orta noktaları arası mesafe.
+    Yatay: outer lip köşeleri arası (daha stabil referans).
+    """
+    p = landmarks[:, :2]
+    vertical  = np.linalg.norm(p[_INNER_TOP] - p[_INNER_BOTTOM])
+    horizontal = np.linalg.norm(p[_OUTER_LEFT] - p[_OUTER_RIGHT])
+    return float(vertical / (horizontal + 1e-6))
 
 
 class MouthMovementDetector(LivenessDetectorBase):
     """
-    Aktif liveness: kullanıcıdan ağzını açıp kapatması istenir.
-    Fotoğraf veya ekranda MAR değişmez → FAIL.
+    Aktif liveness: ağzı açıp kapatma.
+    Inner-lip aperture + hysteresis ile daha stabil tespit.
     """
 
     NAME = "mouth_movement"
@@ -64,9 +63,9 @@ class MouthMovementDetector(LivenessDetectorBase):
         self._reset_state()
 
     def _reset_state(self) -> None:
-        self._open_close_count = 0    # tamamlanan açma-kapama sayısı
-        self._consec_open      = 0    # ardışık açık frame
-        self._consec_closed    = 0    # ardışık kapalı frame
+        self._open_close_count = 0
+        self._consec_open      = 0
+        self._consec_closed    = 0
         self._mouth_open       = False
         self._start_time       = time.monotonic()
 
@@ -78,9 +77,9 @@ class MouthMovementDetector(LivenessDetectorBase):
 
     def check(self, bgr_frame: np.ndarray, bbox: tuple) -> LivenessResult:
         elapsed   = time.monotonic() - self._start_time
-        timed_out = elapsed > _WINDOW_SECONDS
+        timed_out = elapsed > WINDOW_SECONDS
 
-        if timed_out and not (self._open_close_count >= _MIN_OPEN_CLOSE):
+        if timed_out and self._open_close_count < MIN_OPEN_CLOSE:
             self._reset_state()
             elapsed   = 0.0
             timed_out = False
@@ -110,26 +109,27 @@ class MouthMovementDetector(LivenessDetectorBase):
             )
 
         lm  = np.array(lm68)
-        mar = _mar(lm)
+        mar = _mar_inner(lm)
 
-        # Açma-kapama state machine
-        if mar > _OPEN_THRESHOLD:
+        # ── Hysteresis state machine ──────────────────────────────────────
+        if mar > OPEN_THRESHOLD:
             self._consec_open   += 1
             self._consec_closed  = 0
-            if self._consec_open >= _CONSEC_FRAMES:
+            if self._consec_open >= CONSEC_FRAMES:
                 self._mouth_open = True
-        elif mar < _CLOSE_THRESHOLD:
+        elif mar < CLOSE_THRESHOLD:
             self._consec_closed += 1
             self._consec_open    = 0
-            if self._consec_closed >= _CONSEC_FRAMES and self._mouth_open:
+            if self._consec_closed >= CONSEC_FRAMES and self._mouth_open:
                 self._open_close_count += 1
                 self._mouth_open = False
         else:
+            # Hysteresis zone — durum korunur
             self._consec_open   = 0
             self._consec_closed = 0
 
-        completed = self._open_close_count >= _MIN_OPEN_CLOSE
-        score     = 1.0 if completed else min(0.99, self._open_close_count / _MIN_OPEN_CLOSE)
+        completed = self._open_close_count >= MIN_OPEN_CLOSE
+        score     = 1.0 if completed else min(0.99, self._open_close_count / MIN_OPEN_CLOSE)
 
         return LivenessResult(
             is_live=completed,
@@ -138,11 +138,12 @@ class MouthMovementDetector(LivenessDetectorBase):
             challenge_completed=completed,
             message=(
                 "Tamamlandi!" if completed
-                else f"Agiz ac/kapat: {self._open_close_count}/{_MIN_OPEN_CLOSE}"
+                else f"Agiz ac/kapat: {self._open_close_count}/{MIN_OPEN_CLOSE}"
             ),
             metadata={
                 "mar":        round(mar, 3),
                 "open_close": self._open_close_count,
+                "mouth_open": self._mouth_open,
                 "elapsed":    round(elapsed, 1),
             },
         )

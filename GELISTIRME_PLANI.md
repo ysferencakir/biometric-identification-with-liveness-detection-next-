@@ -251,6 +251,125 @@ CREATE TABLE audit_log (
 
 ---
 
+### Araştırma Bulguları — Adaptasyon Planı
+
+> Kaynak: Deep Research Report (2026-05-20)
+
+#### Özet Bulgular
+
+| Modül | Mevcut Sorun | Önerilen Çözüm | Öncelik |
+|---|---|---|---|
+| BlinkDetector | Sabit EAR eşiği (0.23) — yavaş kırpanlarda başarısız | Adaptive Modified EAR + state machine (kişiye özel kalibrasyon) | 🔴 Yüksek |
+| HeadMovementDetector | Oran tabanlı yaw proxy — kamera açısına bağımlı | OpenCV solvePnP / solvePnPRefineLM | 🔴 Yüksek |
+| MouthMovementDetector | Landmark indeksleri görsel doğrulanmadı | Inner-lip aperture + hysteresis + indeks overlay doğrulama | 🟡 Orta |
+| TextureAnalyzer | Domain shift (MiniFASNet) | MobileNetV3 hafif PAD + replay heuristics | 🔴 Yüksek |
+| VoiceChallenge | Henüz yok | Vosk Turkish (dar vocab) / faster-whisper small int8 | 🟡 Orta |
+
+---
+
+#### 3 Aşamalı Adaptasyon Yol Haritası
+
+**AŞAMA 1 — Yeni model indirmeden iyileştirme**
+```
+BlinkDetector:
+  - İlk 1-2 saniyede açık göz EAR istatistiklerini topla
+  - Kişiye özel üst/alt kuantilden eşik türet
+  - Sabit 0.23 yerine dinamik eşik
+  - "açık→kapalı→açık" state machine (tek frame eşik değil)
+
+HeadMovementDetector:
+  - Mevcut landmark_3d_68 kullanarak OpenCV solvePnP
+  - Stabil 6 nokta: burun ucu, göz köşeleri, ağız köşeleri, çene
+  - Yaw/pitch/roll değerlerini oran yerine derece cinsinden ölç
+  - solvePnPRansac + solvePnPRefineLM ile kararlı poz
+
+MouthMovementDetector:
+  - Overlay scripti ile landmark indekslerini görsel doğrula
+  - Outer-lip yerine inner-lip (60-67) aperture kullan
+  - İki eşikli hysteresis + kısa temporal smoothing ekle
+```
+
+**AŞAMA 2 — MediaPipe entegrasyonu**
+```
+Liveness için MediaPipe Face Landmarker ekle:
+  - 478 3B landmark + blendshape + transformation matrix
+  - InsightFace: SADECE yüz tanıma için (değişmez)
+  - MediaPipe: SADECE liveness için (paralel çalışır)
+  
+Avantajlar:
+  - Blink: iris normalize eyelid aperture (göz boyutundan bağımsız)
+  - Mouth: jawOpen blendshape skoru (landmark indeksine mahkum değil)
+  - Head: facial transformation matrix (solvePnP kalibrasyonu gerekmez)
+  
+Kurulum: pip install mediapipe (0.10.x → tasks API)
+Model: face_landmarker.task (~30MB)
+CPU tahmini: 10-25ms/frame
+```
+
+**AŞAMA 3 — Çok sinyalli PAD (TextureAnalyzer yeniden yazma)**
+```
+4 bileşenli karar motoru:
+
+1. Hafif RGB PAD skoru
+   - MobileNetV3 tabanlı light-weight-face-anti-spoofing
+   - MiniFASNet yardımcı skor olarak kalabilir
+   - kendi webcam verimizle fine-tune edilebilir
+
+2. Replay/print heuristics
+   - Moiré/frekans band anormalliği (FFT)
+   - Ekran/kağıt kenar tespiti
+   - Aşırı speküler glare
+   - Düşük mikrodoku çeşitliliği
+
+3. Geometry challenge consistency
+   - "sağa bak → kırp → ağzını aç" sırasının gerçekten görülüp görülmediği
+   - solvePnP + blink + mouth state tutarlılığı
+
+4. Capture quality gate
+   - Blur, yüz boyutu, pozlama, kırpma kalitesi kötüyse PAD kararı üretme
+
+Veri seti önerileri (fine-tuning için):
+  - CelebA-Spoof (625K görüntü, 10K kişi)
+  - OULU-NPU (mobil ön kamera, farklı cihaz)
+  - CASIA-SURF CeFA (3D saldırılar dahil)
+  - UniAttackData (CVPR 2024, 28K video, 14 saldırı türü)
+```
+
+**VoiceChallenge Planı**
+```
+Dar vocabulary (sayılar): Vosk Turkish + grammar constraint
+  - ~50MB model, ~300MB RAM
+  - <300ms latency
+
+Geniş vocabulary: faster-whisper small int8
+  - CPU'da daha hızlı, int8 quantization
+  - Türkçe için "small" tercih edilmeli
+
+Ses + görüntü senkronizasyonu:
+  - Kullanıcı konuşurken ağız hareketi var mı?
+  - Ses enerjisi ile jaw motion kabaca hizalı mı?
+  - → Replay/TTS saldırılarına karşı ek güvence
+
+Opsiyonel: AASIST / RawNet2 ses anti-spoofing skoru
+  - Hard reject değil, risk artırıcı sinyal olarak
+```
+
+---
+
+#### Sprint 6 Görev Güncellemesi
+
+| # | Görev | Öncelik | Kaynak |
+|---|---|---|---|
+| 6.1 | ✅ MouthMovementDetector (temel) | — | Tamamlandı |
+| 6.2 | BlinkDetector → Temporal Dip + EMA baseline (kişiye özel) | 🔴 | ✅ Tamamlandı |
+| 6.3 | HeadMovementDetector → Normalized Nose Offset | 🔴 | ✅ Tamamlandı |
+| 6.4 | MouthMovementDetector → inner-lip + hysteresis | 🟡 | ✅ Tamamlandı |
+| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ⬜ Bekliyor |
+| 6.6 | TextureAnalyzer → çok sinyalli PAD | 🔴 | ⬜ Bekliyor |
+| 6.7 | VoiceChallenge → Vosk/faster-whisper | 🟡 | 🔮 Ertelendi |
+
+---
+
 ### Sprint 6 — Yeni Liveness Modülleri
 
 **Tarih:** 31.03.2026 – 25.04.2026 (26 gün)
