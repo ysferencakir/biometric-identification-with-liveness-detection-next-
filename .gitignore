@@ -39,6 +39,7 @@ data/
 *.pt
 *.pkl
 *.h5
+*.task
 models/
 
 # Python build/cache
