@@ -17,10 +17,11 @@ Yaw hesabı:
 
 import time
 
-import cv2
 import numpy as np
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
+from core.detection import FaceDetector
+from core.preprocessing import prepare_for_insightface
 
 # 68-point landmark indeksleri
 _LEFT_EYE_OUTER  = 36   # sol göz dış köşe
@@ -84,9 +85,8 @@ class HeadMovementDetector(LivenessDetectorBase):
         timed_out = elapsed > _WINDOW_SECONDS
 
         try:
-            from core.detection import FaceDetector
             detector  = FaceDetector.get_instance()
-            rgb       = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            rgb       = prepare_for_insightface(bgr_frame)
             detection = detector.detect(rgb)
         except Exception as exc:
             return LivenessResult(
@@ -136,7 +136,7 @@ class HeadMovementDetector(LivenessDetectorBase):
                 self._hold_count = 0
 
         completed = len(self._completed) == len(_DIRECTIONS)
-        score     = len(self._completed) / len(_DIRECTIONS)
+        score     = 1.0 if completed else len(self._completed) / len(_DIRECTIONS)
 
         dir_labels = {"right": "saga", "left": "sola"}
         remaining  = [dir_labels[d] for d in _DIRECTIONS if d not in self._completed]

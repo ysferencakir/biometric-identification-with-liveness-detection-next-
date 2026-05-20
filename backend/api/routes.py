@@ -49,12 +49,39 @@ from utils.constants import (
 )
 from utils.image import decode_base64_image, decode_upload_image
 
-# Kullanıcıya gösterilecek talimatlar (detector implemente edilene kadar sabit)
-_INSTRUCTIONS: dict[str, str] = {
-    "blink": "Lütfen iki kez göz kırpın.",
-    "head_movement": "Başınızı yavaşça sağa çevirin.",
-    "texture": "Kameraya düz bakın, hareketsiz kalın.",
-}
+# Session başına detector instance'ları — {session_id: {challenge_name: detector}}
+_session_detectors: dict[str, dict] = {}
+_session_locks: dict[str, "threading.Lock"] = {}
+import threading
+
+
+def _get_session_lock(session_id: str) -> "threading.Lock":
+    if session_id not in _session_locks:
+        _session_locks[session_id] = threading.Lock()
+    return _session_locks[session_id]
+
+
+def _get_detector(session_id: str, challenge_name: str):
+    """Session'a ait detector instance'ını döner, yoksa oluşturur."""
+    from core.liveness import liveness_manager
+    if session_id not in _session_detectors:
+        _session_detectors[session_id] = {}
+    if challenge_name not in _session_detectors[session_id]:
+        # Manager'dan yeni bir instance al (her session için ayrı state)
+        available = liveness_manager._registry
+        if challenge_name in available:
+            import copy
+            det = copy.deepcopy(available[challenge_name])
+            det.reset()
+            _session_detectors[session_id][challenge_name] = det
+        else:
+            _session_detectors[session_id][challenge_name] = None
+    return _session_detectors[session_id].get(challenge_name)
+
+
+def _cleanup_session_detectors(session_id: str) -> None:
+    _session_detectors.pop(session_id, None)
+    _session_locks.pop(session_id, None)
 
 logger = logging.getLogger(__name__)
 
@@ -243,10 +270,14 @@ def delete_user(user_id: str) -> DeleteUserResponse:
 @router.get("/liveness/available", response_model=LivenessAvailableResponse, tags=["Liveness"])
 def get_available_detectors() -> LivenessAvailableResponse:
     """List all registered liveness detector modules."""
-    detectors = [
-        DetectorInfo(name=name, instruction=_INSTRUCTIONS.get(name, "Kameraya bakın."))
-        for name in settings.LIVENESS_DETECTORS
-    ]
+    from core.liveness import liveness_manager
+
+    detectors = []
+    for name in liveness_manager.available_methods:
+        detector = liveness_manager._registry.get(name)
+        if detector:
+            instruction = detector.get_instruction()
+            detectors.append(DetectorInfo(name=name, instruction=instruction))
     return LivenessAvailableResponse(detectors=detectors)
 
 
@@ -308,43 +339,64 @@ def _submit_liveness_inner(body: LivenessSubmitRequest) -> LivenessSubmitRespons
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     if session["status"] == "expired":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session expired")
-    if session["status"] in ("completed", "denied"):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Session already {session['status']}")
+
+    # Challenge veya session zaten tamamlandıysa — sessizce 200 dön
     if body.challenge_name not in session["challenges"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Challenge '{body.challenge_name}' not in this session")
-    if body.challenge_name in session["completed_challenges"]:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Challenge already completed")
+
+    all_done = session["status"] in ("completed", "denied")
+    if body.challenge_name in session["completed_challenges"] or all_done:
+        return LivenessSubmitResponse(
+            challenge_name=body.challenge_name,
+            passed=True,
+            confidence=1.0,
+            instruction="Tamamlandi!",
+            all_challenges_passed=session["status"] == "completed",
+        )
 
     img = decode_base64_image(body.frame)
     if img is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot decode frame")
 
-    from core.preprocessing import prepare_for_insightface
-    detector = FaceDetector.get_instance()
-    rgb = prepare_for_insightface(img)
-    detection = detector.detect(rgb)
+    # Gerçek liveness detector'ı çalıştır (thread-safe)
+    det            = _get_detector(body.session_id, body.challenge_name)
+    liveness_msg   = ""
 
-    passed = detection.has_face and detection.count == 1
-    confidence = float(detection.single_face.score) if passed else 0.0
+    if det is not None:
+        with _get_session_lock(body.session_id):
+            liveness_result = det.check(img, (0, 0, 0, 0))
+        passed          = liveness_result.challenge_completed
+        confidence      = liveness_result.score
+        liveness_msg    = liveness_result.message   # "Göz kırpma: 1/2"
+    else:
+        from core.preprocessing import prepare_for_insightface
+        face_det = FaceDetector.get_instance()
+        rgb      = prepare_for_insightface(img)
+        detected = face_det.detect(rgb)
+        passed     = detected.has_face and detected.count == 1
+        confidence = float(detected.single_face.score) if passed else 0.0
 
+    # Sadece passed=True olduğunda DB'ye yaz (her frame'i kaydetme)
     latency_ms = int((time.monotonic() - t0) * 1000)
-    updated = db.complete_challenge(
-        body.session_id, body.challenge_name, passed, confidence, latency_ms
-    )
-
-    event = "challenge_passed" if passed else "challenge_failed"
-    db.add_audit_log(body.session_id, event, {
-        "challenge": body.challenge_name, "confidence": confidence, "latency_ms": latency_ms,
-    })
-
-    all_passed = updated["status"] == "completed"
-    instruction = _INSTRUCTIONS.get(body.challenge_name, "Kameraya bakin.")
+    if passed:
+        updated = db.complete_challenge(
+            body.session_id, body.challenge_name, passed, confidence, latency_ms
+        )
+        db.add_audit_log(body.session_id, "challenge_passed", {
+            "challenge": body.challenge_name, "confidence": confidence,
+        })
+        all_passed = updated["status"] == "completed"
+        if all_passed:
+            _cleanup_session_detectors(body.session_id)
+    else:
+        updated    = db.get_session(body.session_id) or {}
+        all_passed = False
 
     return LivenessSubmitResponse(
         challenge_name=body.challenge_name,
         passed=passed,
         confidence=round(confidence, 4),
-        instruction=instruction,
+        instruction=liveness_msg or (det.get_instruction() if det else ""),
         all_challenges_passed=all_passed,
     )
 
@@ -372,36 +424,51 @@ def verify(body: VerifyRequest) -> VerifyResponse:
     if img is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot decode frame")
 
-    recognition = recognize_frame(img, threshold=settings.RECOGNITION_THRESHOLD)
-    decision = decide(recognition)
-
-    new_status = "denied" if not decision.access_granted else "completed"
-    db.update_session_status(body.session_id, new_status)
-
-    event = "access_granted" if decision.access_granted else "access_denied"
-    db.add_audit_log(body.session_id, event, {
-        "user_id": recognition.user_id,
-        "score": recognition.recognition_score,
-        "reason": decision.reason,
-    })
-
-    # Liveness sonuçlarını DB'den çek
+    # Her challenge için sadece en iyi (passed=1 olan) sonucu al
     from db.store import _get_conn
     with _get_conn() as conn:
         rows = conn.execute(
-            "SELECT challenge_name, passed, confidence FROM liveness_challenges WHERE session_id = ? ORDER BY id",
+            """
+            SELECT challenge_name,
+                   MAX(passed)                                          AS passed,
+                   MAX(CASE WHEN passed=1 THEN confidence ELSE 0 END)  AS confidence
+            FROM liveness_challenges
+            WHERE session_id = ?
+            GROUP BY challenge_name
+            """,
             (body.session_id,),
         ).fetchall()
+    liveness_rows = [dict(r) for r in rows]
+
+    # Recognition + liveness → karar
+    recognition = recognize_frame(img, threshold=settings.RECOGNITION_THRESHOLD)
+    decision    = decide(recognition, liveness_results=liveness_rows)
+
+    db.update_session_status(body.session_id, "denied" if not decision.access_granted else "completed")
+    db.add_audit_log(body.session_id,
+        "access_granted" if decision.access_granted else "access_denied",
+        {
+            "user_id": recognition.user_id,
+            "score":   recognition.recognition_score,
+            "reason":  decision.reason,
+            "liveness_avg_conf": decision.liveness.avg_confidence if decision.liveness else None,
+        },
+    )
+
     liveness_results = [
-        LivenessResultSummary(challenge=r["challenge_name"], passed=bool(r["passed"]), confidence=r["confidence"])
-        for r in rows
+        LivenessResultSummary(
+            challenge=r["challenge_name"],
+            passed=bool(r["passed"]),
+            confidence=r["confidence"],
+        )
+        for r in liveness_rows
     ]
 
     return VerifyResponse(
         access_granted=decision.access_granted,
-        matched_user=recognition.user_id,
-        name=recognition.name,
-        recognition_score=round(recognition.recognition_score, 4),
+        matched_user=decision.user_id,
+        name=decision.name,
+        recognition_score=round(decision.recognition_score, 4),
         liveness_results=liveness_results,
         decision_reason=decision.reason,
     )

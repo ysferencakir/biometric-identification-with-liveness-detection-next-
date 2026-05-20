@@ -16,10 +16,11 @@ EAR formülü (Soukupova & Cech, 2016):
 
 import time
 
-import cv2
 import numpy as np
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
+from core.detection import FaceDetector
+from core.preprocessing import prepare_for_insightface
 
 # 68-point standart göz indeksleri
 _LEFT_EYE  = [36, 37, 38, 39, 40, 41]
@@ -64,9 +65,8 @@ class BlinkDetector(LivenessDetectorBase):
         timed_out = elapsed > _WINDOW_SECONDS
 
         try:
-            from core.detection import FaceDetector
             detector  = FaceDetector.get_instance()
-            rgb       = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            rgb       = prepare_for_insightface(bgr_frame)
             detection = detector.detect(rgb)
         except Exception as exc:
             return LivenessResult(
@@ -97,6 +97,12 @@ class BlinkDetector(LivenessDetectorBase):
         right_ear = _ear(lm, _RIGHT_EYE)
         avg_ear   = (left_ear + right_ear) / 2.0
 
+        import logging as _log
+        _log.getLogger("blink").debug(
+            "EAR=%.3f (L=%.3f R=%.3f) blinks=%d consec=%d",
+            avg_ear, left_ear, right_ear, self._blink_count, self._consec_below
+        )
+
         # Göz kırpma state machine
         if avg_ear < _BLINK_THRESHOLD:
             self._consec_below += 1
@@ -108,7 +114,13 @@ class BlinkDetector(LivenessDetectorBase):
             self._eye_closed   = False
 
         completed = self._blink_count >= _MIN_BLINKS
-        score     = min(1.0, self._blink_count / _MIN_BLINKS) if not timed_out else 0.0
+        # Tamamlandıysa her zaman 1.0, değilse kısmi ilerleme
+        if completed:
+            score = 1.0
+        elif timed_out:
+            score = 0.0
+        else:
+            score = min(0.99, self._blink_count / _MIN_BLINKS)
 
         return LivenessResult(
             is_live=completed,

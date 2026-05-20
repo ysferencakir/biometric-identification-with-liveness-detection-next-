@@ -195,8 +195,8 @@ CREATE TABLE audit_log (
 | 2.3 | Session store CRUD (`db/store.py` genişletildi) | Mithatcan | ✅ Tamamlandı |
 | 2.4 | `BlinkDetector` implementasyonu (InsightFace 106 landmark) | Yusuf | ✅ Tamamlandı |
 | 2.5 | `HeadMovementDetector` implementasyonu | Yusuf | ✅ Tamamlandı |
-| 2.6 | Test UI `/test-ui` sayfası — modül bazlı test | İsmail | ⬜ Bekliyor |
-| 2.7 | `LivenessChallenge.tsx` bileşeni | İsmail | ⬜ Bekliyor |
+| 2.6 | Test UI `/test-ui` sayfası — modül bazlı test | İsmail | ✅ Tamamlandı |
+| 2.7 | `LivenessChallenge.tsx` bileşeni | İsmail | ✅ Tamamlandı (verify/page.tsx içinde inline) |
 
 ---
 
@@ -205,13 +205,13 @@ CREATE TABLE audit_log (
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 3.1 | Decision Engine tam implementasyon (2-liveness + biometrik) | Mithatcan | ⬜ Bekliyor |
-| 3.2 | `POST /api/verify` endpoint | Mithatcan | ⬜ Bekliyor |
-| 3.3 | Audit log entegrasyonu | Mithatcan | ⬜ Bekliyor |
-| 3.4 | `TextureAnalyzer` implementasyonu (LBP) | Yusuf | ⬜ Bekliyor |
-| 3.5 | `liveness/manager.py` — auto-register tüm modüller | Yusuf | ⬜ Bekliyor |
-| 3.6 | `/verify` sayfası — tam doğrulama akışı | İsmail | ⬜ Bekliyor |
-| 3.7 | `ProgressStepper.tsx` + `ResultPanel.tsx` | İsmail | ⬜ Bekliyor |
+| 3.1 | Decision Engine tam implementasyon (2-liveness + biometrik) | Mithatcan | ✅ Tamamlandı |
+| 3.2 | `POST /api/verify` endpoint (liveness entegre) | Mithatcan | ✅ Tamamlandı |
+| 3.3 | Audit log entegrasyonu | Mithatcan | ✅ Tamamlandı |
+| 3.4 | `TextureAnalyzer` implementasyonu (LBP) | Yusuf | ✅ Tamamlandı |
+| 3.5 | `liveness/manager.py` — auto-register tüm modüller | Yusuf | ✅ Tamamlandı |
+| 3.6 | `/verify` sayfası — tam doğrulama akışı | İsmail | ✅ Tamamlandı |
+| 3.7 | `ProgressStepper.tsx` + `ResultPanel.tsx` | İsmail | ✅ Tamamlandı (inline) |
 
 ---
 
@@ -388,7 +388,7 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 
 | # | Endpoint | Hata | Durum |
 |---|---|---|---|
-| 1 | `POST /liveness/submit` | Browser'dan gönderilen kamera frame'i `500 Internal Server Error` (text/plain) döndürüyor. Python/curl'den çalışıyor. CORS veya frame encoding kaynaklı olabilir. | 🔴 Araştırılacak |
+| 1 | `POST /liveness/submit` | Browser 500 hatası — `allow_credentials=False` + global exception handler ile çözüldü. | ✅ Çözüldü |
 
 ---
 
@@ -400,3 +400,4 @@ def decide(session, liveness_results, recognition_result) -> AccessDecision:
 | 2026-05-19 | Sprint 1 başladı: .gitignore, base.py (NAME+get_instruction+reset), DB tabloları (sessions, liveness_challenges, audit_log) tamamlandı | Claude Code |
 | 2026-05-19 | Sprint 1 tamamlandı: API_CONTRACT.md, Next.js frontend kurulumu, types/api.ts, lib/api.ts, lib/camera.ts, CameraFeed.tsx | Claude Code |
 | 2026-05-19 | Sprint 2 kısmen: /session/create, /liveness/submit, /verify, /liveness/available endpoint'leri + session CRUD + frontend sayfaları (verify, register, test-ui) | Claude Code |
+| 2026-05-19 | BlinkDetector + HeadMovementDetector tamamlandı. Decision Engine liveness entegrasyonu. Browser 500 hatası çözüldü. Tam E2E akış çalışıyor (Hoşgeldin Yusuf, skor 85.1%) | Claude Code |
