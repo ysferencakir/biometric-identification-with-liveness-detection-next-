@@ -4,13 +4,13 @@ uvicorn[standard]==0.29.0
 python-multipart==0.0.9        # required for File/Form uploads in FastAPI
 
 # ── Config & validation ───────────────────────────────────────────────────────
-pydantic==2.7.1
-pydantic-settings==2.2.1
+pydantic==2.9.2              # Updated for Python 3.13 support
+pydantic-settings==2.5.0     # Updated for Python 3.13 support
 python-dotenv==1.0.1
 
 # ── Computer Vision ───────────────────────────────────────────────────────────
 opencv-python==4.9.0.80        # full build with GUI (needed for imshow in scripts)
-numpy==1.26.4
+numpy>=1.24.0                  # Flexible version for compatibility
 
 # ── Face Recognition ─────────────────────────────────────────────────────────
 # insightface requires cmake to build native extensions on Windows.
@@ -19,16 +19,11 @@ numpy==1.26.4
 insightface==0.7.3
 
 # ── ONNX Runtime (choose ONE, do NOT install both) ────────────────────────────
-#
 # RTX 4070 + CUDA 12.x (recommended for this project):
-#   pip install onnxruntime-gpu==1.18.0
+#   pip install onnxruntime-gpu==1.26.0
 #
 # CPU-only fallback:
-#   pip install onnxruntime==1.18.0
-#
-# Verify GPU providers after install:
-#   python -c "import onnxruntime; print(onnxruntime.get_available_providers())"
-#   Expected: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+onnxruntime==1.26.0             # CPU version (latest)
 
 # ── HTTP client (used by scripts/) ───────────────────────────────────────────
 requests==2.31.0
@@ -41,6 +36,7 @@ Pillow>=9.0.0
 
 # ── Liveness Detection ───────────────────────────────────────────────────────
 mediapipe==0.10.35              # BlinkDetector, HeadMovementDetector
+ml_dtypes>=0.5.1                # TensorFlow compatibility
 
 # ── Optional: future liveness / ML work ──────────────────────────────────────
 # torch>=2.3.0

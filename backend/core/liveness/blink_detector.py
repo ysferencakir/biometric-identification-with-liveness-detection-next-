@@ -1,24 +1,29 @@
 """
 core/liveness/blink_detector.py
 --------------------------------
-Göz kırpma tabanlı liveness — Temporal Dip Detection.
+Göz kırpma tabanlı liveness — Temporal Dip Detection + MediaPipe ensemble.
 
-Yöntem (v3):
-  - Mutlak EAR eşiği YOK — kişinin kendi baseline'ından sapar mı bakılır
-  - Exponential Moving Average ile canlı baseline takibi
-  - Eşik = baseline * DIP_FACTOR (kişiye özgün, otomatik)
-  - Küçük göz / dar göz aralığı olan kullanıcılar için çalışır
+Yöntem (v4):
+  - InsightFace EAR: kişinin kendi baseline'ından sap tespiti (primary)
+  - MediaPipe blendshape: iris normalize göz kırpma skoru (secondary)
+  - Adaptive ensemble: sinyal kalitesine göre dinamik ağırlıklandırma
   - "açık→dip→açık" state machine (gürültü filtresi)
 """
 
+import logging
 import time
 from collections import deque
+from typing import Optional
 
 import numpy as np
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
+from core.liveness.mediapipe_provider import MediaPipeProvider
+from core.liveness.utils import AdaptiveWeights
 from core.detection import FaceDetector
 from core.preprocessing import prepare_for_insightface
+
+logger = logging.getLogger(__name__)
 
 _LEFT_EYE  = [36, 37, 38, 39, 40, 41]
 _RIGHT_EYE = [42, 43, 44, 45, 46, 47]
@@ -52,6 +57,10 @@ class BlinkDetector(LivenessDetectorBase):
     NAME = "blink"
 
     def __init__(self) -> None:
+        self._mp_provider: Optional[MediaPipeProvider] = None
+        # Higher weight to EAR (more reliable in poor lighting)
+        self._adaptive_weights = AdaptiveWeights(initial_weight_primary=0.7)
+        self._mp_blink_buffer: deque[float] = deque(maxlen=10)
         self._reset_state()
 
     def _reset_state(self) -> None:
@@ -64,6 +73,10 @@ class BlinkDetector(LivenessDetectorBase):
         self._in_dip       = False       # dip içinde miyiz?
 
         self._start_time   = time.monotonic()
+        
+        # Adaptive weights
+        self._adaptive_weights.reset()
+        self._mp_blink_buffer.clear()
 
     def get_instruction(self) -> str:
         return "Lutfen dogal sekilde iki kez goz kirpin."
@@ -85,6 +98,14 @@ class BlinkDetector(LivenessDetectorBase):
             self._reset_state()
             elapsed   = 0.0
             timed_out = False
+
+        # Initialize MediaPipe provider (lazy load)
+        if self._mp_provider is None:
+            try:
+                self._mp_provider = MediaPipeProvider.get_instance()
+            except Exception as e:
+                logger.warning("MediaPipe provider init failed, using InsightFace only: %s", e)
+                self._mp_provider = None
 
         try:
             detector  = FaceDetector.get_instance()
@@ -113,6 +134,20 @@ class BlinkDetector(LivenessDetectorBase):
         lm = np.array(lm68)
         ear = (_ear(lm, _LEFT_EYE) + _ear(lm, _RIGHT_EYE)) / 2.0
 
+        # ── MediaPipe blendshape sinyali ──────────────────────────────────
+        mp_blink_score = 0.0
+        mp_result = None
+        if self._mp_provider is not None:
+            try:
+                mp_result = self._mp_provider.process(bgr_frame)
+                if mp_result is not None:
+                    left_blink, right_blink = self._mp_provider.get_blink_scores(mp_result)
+                    # Inverse: blendshape 0=open, 1=closed; we want open=high
+                    mp_blink_score = 1.0 - ((left_blink + right_blink) / 2.0)
+                    self._mp_blink_buffer.append(mp_blink_score)
+            except Exception as e:
+                logger.debug("MediaPipe extraction failed: %s", e)
+
         # ── Kalibrasyon: ilk CALIB_FRAMES frame'de baseline kur ──────────
         if not self._calibrated:
             self._calib_buf.append(ear)
@@ -130,8 +165,16 @@ class BlinkDetector(LivenessDetectorBase):
                     "threshold":  0.0,
                     "calibrated": False,
                     "blinks":     0,
+                    "mp_blink_score": round(mp_blink_score, 3),
                 },
             )
+
+        # ── Adaptive weighting: EAR dip + MediaPipe blink ─────────────────
+        ear_confidence = 0.7 if self._baseline is not None else 0.0
+        mp_confidence = 0.5 if len(self._mp_blink_buffer) > 0 else 0.0
+        
+        self._adaptive_weights.update(ear_confidence, mp_confidence)
+        w_ear, w_mp = self._adaptive_weights.get_weights()
 
         # ── EMA baseline güncelle (yalnızca göz açıkken) ─────────────────
         threshold = self._threshold
@@ -163,12 +206,16 @@ class BlinkDetector(LivenessDetectorBase):
                 else f"Goz kirpma: {self._blink_count}/{MIN_BLINKS}"
             ),
             metadata={
-                "ear":        round(ear, 4),
-                "baseline":   round(self._baseline, 4),
-                "threshold":  round(threshold, 4),
-                "dip_pct":    round((1 - ear / self._baseline) * 100, 1),  # % ne kadar düştü
-                "blinks":     self._blink_count,
-                "elapsed":    round(elapsed, 1),
-                "calibrated": True,
+                "ear":            round(ear, 4),
+                "baseline":       round(self._baseline, 4),
+                "threshold":      round(threshold, 4),
+                "dip_pct":        round((1 - ear / self._baseline) * 100, 1),
+                "mp_blink_score": round(mp_blink_score, 3),
+                "ensemble_score": round(score, 3),
+                "weight_ear":     round(w_ear, 2),
+                "weight_mp":      round(w_mp, 2),
+                "blinks":         self._blink_count,
+                "elapsed":        round(elapsed, 1),
+                "calibrated":     True,
             },
         )

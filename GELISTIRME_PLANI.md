@@ -364,9 +364,100 @@ Opsiyonel: AASIST / RawNet2 ses anti-spoofing skoru
 | 6.2 | BlinkDetector → Temporal Dip + EMA baseline (kişiye özel) | 🔴 | ✅ Tamamlandı |
 | 6.3 | HeadMovementDetector → Normalized Nose Offset | 🔴 | ✅ Tamamlandı |
 | 6.4 | MouthMovementDetector → inner-lip + hysteresis | 🟡 | ✅ Tamamlandı |
-| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ⬜ Bekliyor |
+| 6.5 | MediaPipe Face Landmarker entegrasyonu | 🟡 | ⬜ Planlandı |
 | 6.6 | TextureAnalyzer → çok sinyalli PAD | 🔴 | ⬜ Bekliyor |
 | 6.7 | VoiceChallenge → Vosk/faster-whisper | 🟡 | 🔮 Ertelendi |
+
+---
+
+#### 6.5 MediaPipe Güçlendirme Planı
+
+**Neden MediaPipe?**
+- InsightFace `landmark_3d_68` → 68 nokta, yeterli ama sınırlı
+- MediaPipe Face Landmarker → 478 nokta + blendshape + iris/pupil refinement
+- Blink için iris normalize eyelid aperture → kişiden kişiye değişmiyor
+- Mouth için `jawOpen` blendshape skoru → sparse landmark hatalarından bağımsız
+- Head için `facial_transformation_matrix` → solvePnP kalibrasyonu gerekmez
+
+**Mimari (InsightFace korunur):**
+```
+Frame gelir
+  │
+  ├── InsightFace (buffalo_l)  →  Yüz Tanıma + Embedding (DEĞİŞMEZ)
+  │
+  └── MediaPipe Face Landmarker  →  Liveness sinyalleri
+        ├── 478 landmark
+        ├── blendshape skorları (jawOpen, eyeBlinkLeft, eyeBlinkRight...)
+        └── facial_transformation_matrix (baş pozu)
+```
+
+**Kurulum:**
+```bash
+pip install mediapipe  # zaten kurulu ama solutions API kaldırılmış
+# Yeni tasks API için model dosyası gerekiyor (~30MB)
+# face_landmarker.task — MediaPipe model zoo'dan indirilir
+```
+
+**Model indirme:**
+```bash
+wget -q https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+```
+
+**Ortak MediaPipe provider katmanı:**
+```python
+# core/liveness/mediapipe_provider.py
+# Her detector bu provider'dan sonuç alır (tekrar yükleme yok)
+# Singleton — model bir kez yüklenir
+
+class MediaPipeProvider:
+    NAME = "mediapipe_provider"
+
+    def get(self, bgr_frame) -> FaceLandmarkerResult:
+        # tasks API ile 478 landmark + blendshape
+        ...
+
+    def blink_score(self, result) -> tuple[float, float]:
+        # sol/sağ göz blendshape skoru
+        # eyeBlinkLeft, eyeBlinkRight → 0=açık, 1=kapalı
+
+    def jaw_open_score(self, result) -> float:
+        # jawOpen blendshape → 0=kapalı, 1=açık
+
+    def head_yaw(self, result) -> float:
+        # facial_transformation_matrix → yaw açısı (derece)
+```
+
+**Güçlendirilmiş modüller:**
+
+| Modül | Mevcut sinyal | MediaPipe ile ek sinyal | Beklenen iyileştirme |
+|---|---|---|---|
+| `BlinkDetector` | EMA EAR dip (%15) | `eyeBlinkLeft/Right` blendshape | Iris normalize → kişiden bağımsız |
+| `HeadMovementDetector` | Burun offset normalize | `facial_transformation_matrix` yaw | Kamera açısından tamamen bağımsız |
+| `MouthMovementDetector` | Inner-lip MAR hysteresis | `jawOpen` blendshape | Sparse landmark hatasından kurtulur |
+
+**Ensemble kararı:**
+```python
+# Her challenge için iki sinyal → weighted average
+blink_score  = 0.4 * ear_dip + 0.6 * mediapipe_blink
+head_score   = 0.3 * nose_offset + 0.7 * mp_yaw
+mouth_score  = 0.4 * mar_hysteresis + 0.6 * mp_jaw_open
+```
+
+**Görev listesi:**
+```
+6.5.1  face_landmarker.task modelini indir
+6.5.2  core/liveness/mediapipe_provider.py oluştur
+6.5.3  BlinkDetector: blendshape ensemble ekle
+6.5.4  HeadMovementDetector: transformation matrix yaw ekle
+6.5.5  MouthMovementDetector: jawOpen ensemble ekle
+6.5.6  Test: 3 modül ayrı ayrı webcam testi
+6.5.7  Performans ölçümü: <500ms hedefi korunuyor mu?
+```
+
+**Risk:**
+- MediaPipe 0.10.x `solutions` API yok → `tasks` API kullanılmalı
+- `face_landmarker.task` ~30MB model dosyası — .gitignore'a eklenecek
+- CPU overhead: MediaPipe + InsightFace birlikte ~400-500ms olabilir
 
 ---
 

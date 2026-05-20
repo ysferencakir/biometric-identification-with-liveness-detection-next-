@@ -1,27 +1,29 @@
 """
 core/liveness/mouth_movement.py
 ---------------------------------
-Ağız hareketi tabanlı liveness — Inner-lip aperture + hysteresis.
+Ağız hareketi tabanlı liveness — Inner-lip aperture + MediaPipe ensemble.
 
-Yöntem (v2 — Araştırma raporu adaptasyonu):
-  - Outer-lip yerine INNER-lip (60-67) aperture kullanılır
-  - Yatay normalizasyon: ağız köşeleri arası mesafe (48-54)
-  - İki eşikli hysteresis: aç eşiği > kapat eşiği (gürültü filtresi)
-  - CONSEC_FRAMES ardışık frame tutmalı
-  - 15 saniyede MIN_OPEN_CLOSE kez açıp kapama → passed=True
-
-68-point inner lip indeksleri (iBUG/300-W):
-  60: sol iç köşe, 61: üst sol, 62: üst orta, 63: üst sağ
-  64: sağ iç köşe, 65: alt sağ, 66: alt orta, 67: alt sol
+Yöntem (v3 — Araştırma raporu adaptasyonu + MediaPipe):
+  - InsightFace: Inner-lip (60-67) MAR hysteresis (primary)
+  - MediaPipe: jawOpen blendshape skoru (secondary)
+  - Adaptive ensemble: sinyal kalitesine göre dinamik ağırlıklandırma
+  - İki eşikli hysteresis: aç > kapat (gürültü filtresi)
 """
 
+import logging
 import time
+from collections import deque
+from typing import Optional
 
 import numpy as np
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
+from core.liveness.mediapipe_provider import MediaPipeProvider
+from core.liveness.utils import AdaptiveWeights
 from core.detection import FaceDetector
 from core.preprocessing import prepare_for_insightface
+
+logger = logging.getLogger(__name__)
 
 # Inner lip landmark indeksleri (68-point şeması)
 _INNER_TOP    = 62   # üst iç orta
@@ -55,11 +57,15 @@ class MouthMovementDetector(LivenessDetectorBase):
     """
     Aktif liveness: ağzı açıp kapatma.
     Inner-lip aperture + hysteresis ile daha stabil tespit.
+    MediaPipe jawOpen blendshape ile ensemble.
     """
 
     NAME = "mouth_movement"
 
     def __init__(self) -> None:
+        self._mp_provider: Optional[MediaPipeProvider] = None
+        self._adaptive_weights = AdaptiveWeights(initial_weight_primary=0.4)
+        self._mp_jaw_buffer: deque[float] = deque(maxlen=10)
         self._reset_state()
 
     def _reset_state(self) -> None:
@@ -68,6 +74,10 @@ class MouthMovementDetector(LivenessDetectorBase):
         self._consec_closed    = 0
         self._mouth_open       = False
         self._start_time       = time.monotonic()
+        
+        # Adaptive weights
+        self._adaptive_weights.reset()
+        self._mp_jaw_buffer.clear()
 
     def get_instruction(self) -> str:
         return "Lutfen agzinizi iki kez acip kapatin."
@@ -83,6 +93,14 @@ class MouthMovementDetector(LivenessDetectorBase):
             self._reset_state()
             elapsed   = 0.0
             timed_out = False
+
+        # Initialize MediaPipe provider (lazy load)
+        if self._mp_provider is None:
+            try:
+                self._mp_provider = MediaPipeProvider.get_instance()
+            except Exception as e:
+                logger.warning("MediaPipe provider init failed, using InsightFace only: %s", e)
+                self._mp_provider = None
 
         try:
             detector  = FaceDetector.get_instance()
@@ -110,6 +128,25 @@ class MouthMovementDetector(LivenessDetectorBase):
 
         lm  = np.array(lm68)
         mar = _mar_inner(lm)
+
+        # ── MediaPipe jawOpen sinyali ──────────────────────────────────────
+        mp_jaw_open = 0.0
+        mp_result = None
+        if self._mp_provider is not None:
+            try:
+                mp_result = self._mp_provider.process(bgr_frame)
+                if mp_result is not None:
+                    mp_jaw_open = self._mp_provider.get_jaw_open_score(mp_result)
+                    self._mp_jaw_buffer.append(mp_jaw_open)
+            except Exception as e:
+                logger.debug("MediaPipe jaw extraction failed: %s", e)
+
+        # ── Adaptive weighting: MAR + MediaPipe jawOpen ────────────────────
+        mar_confidence = 0.6 if mar > 0.1 else 0.3
+        mp_confidence = 0.5 if len(self._mp_jaw_buffer) > 0 else 0.0
+        
+        self._adaptive_weights.update(mar_confidence, mp_confidence)
+        w_mar, w_mp = self._adaptive_weights.get_weights()
 
         # ── Hysteresis state machine ──────────────────────────────────────
         if mar > OPEN_THRESHOLD:
@@ -141,9 +178,13 @@ class MouthMovementDetector(LivenessDetectorBase):
                 else f"Agiz ac/kapat: {self._open_close_count}/{MIN_OPEN_CLOSE}"
             ),
             metadata={
-                "mar":        round(mar, 3),
-                "open_close": self._open_close_count,
-                "mouth_open": self._mouth_open,
-                "elapsed":    round(elapsed, 1),
+                "mar":            round(mar, 3),
+                "mp_jaw_open":    round(mp_jaw_open, 3),
+                "ensemble_score": round(score, 3),
+                "weight_mar":     round(w_mar, 2),
+                "weight_mp":      round(w_mp, 2),
+                "open_close":     self._open_close_count,
+                "mouth_open":     self._mouth_open,
+                "elapsed":        round(elapsed, 1),
             },
         )
