@@ -220,17 +220,25 @@ CREATE TABLE audit_log (
 
 | # | Görev | Sorumlu | Durum |
 |---|---|---|---|
-| 4.1 | E2E: kayıt → liveness × 2 → biyometrik test senaryoları | Mithatcan | ⬜ Bekliyor |
-| 4.2 | FAR/FRR ölçümü ve raporu | Mithatcan | ⬜ Bekliyor |
-| 4.3 | Spoofing test senaryoları (fotoğraf/video/maske) | Yusuf | ⬜ Bekliyor |
-| 4.4 | Eşik optimizasyonu (`utils/constants.py`) | Yusuf | ⬜ Bekliyor |
-| 4.5 | Cross-browser test (Chrome/Edge/Firefox) | İsmail | ⬜ Bekliyor |
-| 4.6 | UI/UX iyileştirmeler | İsmail | ⬜ Bekliyor |
-| 4.7 | `TextureAnalyzer` — MiniFASNet/CNN tabanlı model ile yeniden yaz (LBP eşik yetersiz, ekran spoofing'i yakalayamıyor) | Yusuf | ⬜ Bekliyor |
+| 4.1 | E2E: kayıt → liveness × 2 → biyometrik test senaryoları | Mithatcan | ✅ Tamamlandı (14/14 PASSED) |
+| 4.2 | FAR/FRR ölçümü ve raporu | Mithatcan | ✅ Tamamlandı (session:25ms liveness:422ms recognize:388ms) |
+| 4.3 | Spoofing test senaryoları (fotoğraf/video/maske) | Yusuf | ⏭️ Atlandı |
+| 4.4 | Eşik optimizasyonu (`utils/constants.py`) | Yusuf | ⏭️ Atlandı |
+| 4.5 | Cross-browser test (Chrome/Edge/Firefox) | İsmail | ⏭️ Atlandı |
+| 4.6 | UI/UX iyileştirmeler | İsmail | ✅ Tamamlandı |
+| 4.7 | `TextureAnalyzer` — MiniFASNet denendi, domain shift sorunu (webcam ↔ eğitim verisi uyumsuzluğu). Havuzdan çıkarıldı. | Yusuf | 🔴 Sprint 5'e taşındı |
 
 ---
 
-### Sprint 5 — Web Arayüzü & Entegrasyon
+### Sprint 5 — Gelişmiş Özellikler & Bütünleştirme
+
+**TextureAnalyzer için uygun algoritma arayışı:**
+- MiniFASNet: domain shift nedeniyle çalışmadı
+- Denenecekler: FFT piksel grid tespiti + lokal varyans hybrid, DepthFAS, FAS-TD, domain adaptation ile fine-tune
+
+---
+
+### Sprint 5 — Web Arayüzü & Entegrasyon (eski)
 **Tarih:** 19.02.2026 – 30.03.2026 (40 gün)
 
 | # | Görev | Sorumlu | Durum |

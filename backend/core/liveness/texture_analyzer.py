@@ -1,106 +1,95 @@
 """
 core/liveness/texture_analyzer.py
 -----------------------------------
-LBP (Local Binary Pattern) tabanlı pasif liveness tespiti.
+MiniFASNet tabanlı pasif anti-spoofing liveness tespiti.
 
-Yöntem:
-  - Yüz bölgesi kırpılır ve gri tonlamaya dönüştürülür.
-  - LBP histogram hesaplanır (uniform LBP, 8 komşu, r=1).
-  - Gerçek yüzler geniş, düzgün dağılımlı LBP histogramına sahiptir.
-  - Baskılı fotoğraflar / ekranlar: histogram belirli değerlere yığılır.
-  - Ek özellikler:
-      * Laplacian varyansı (frekans zenginliği)
-      * Lokal kontrast (yüz bölgelerinin kendi içinde değişimi)
-
-Referans:
-  Maatta et al. "Face Spoofing Detection From Single Images Using
-  Micro-Texture Analysis", IJCB 2011.
+Orijinal: minivision-ai/silent-face-anti-spoofing (MiniFASNetV2 + V1SE ensemble)
+prob çıktısı: [background, real, fake] → index 1 = real skor
 """
 
+import sys
 import time
+from pathlib import Path
 
+import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from core.liveness.base import LivenessDetectorBase, LivenessResult
 from core.detection import FaceDetector
 from core.preprocessing import prepare_for_insightface
 
-# ── Eşik değerleri ────────────────────────────────────────────────────────────
-_LAP_VAR_THRESHOLD   = 40.0    # Laplacian varyansı — webcam için düşürüldü
-_HIST_ENTROPY_MIN    = 3.5     # LBP histogram entropisi
-_LOCAL_CONTRAST_MIN  = 8.0     # Lokal kontrast
-_FRAMES_REQUIRED     = 5       # Kaç frame ortalansın
-_WINDOW_SECONDS      = 12.0
-_FACE_MARGIN         = 0.20    # Yüz bbox'ını % kadar genişlet
+_MODEL_DIR  = Path(__file__).parent.parent.parent / "models" / "anti_spoofing"
+_MODEL_V2   = _MODEL_DIR / "2.7_80x80_MiniFASNetV2.pth"
+_MODEL_V1SE = _MODEL_DIR / "4_0_0_80x80_MiniFASNetV1SE.pth"
+_MFAS_PY    = _MODEL_DIR / "MiniFASNet.py"
+
+_INPUT_SIZE     = (80, 80)
+_FRAMES_REQ     = 5
+_WINDOW_SECS    = 15.0
+_LIVE_THRESHOLD = 0.55
+_FACE_MARGIN    = 0.25
 
 
-def _lbp_histogram(gray: np.ndarray) -> np.ndarray:
-    """Uniform LBP histogramı hesapla (8 komşu, r=1)."""
-    h, w = gray.shape
-    lbp = np.zeros((h - 2, w - 2), dtype=np.uint8)
-
-    center = gray[1:-1, 1:-1].astype(np.int16)
-    neighbors = [
-        gray[0:-2, 0:-2], gray[0:-2, 1:-1], gray[0:-2, 2:],
-        gray[1:-1, 2:],   gray[2:,   2:],   gray[2:,   1:-1],
-        gray[2:,   0:-2], gray[1:-1, 0:-2],
-    ]
-    for i, nb in enumerate(neighbors):
-        lbp += ((nb.astype(np.int16) >= center).astype(np.uint8) << i)
-
-    hist, _ = np.histogram(lbp, bins=256, range=(0, 255))
-    hist = hist.astype(np.float32)
-    hist /= (hist.sum() + 1e-6)
-    return hist
+def _import_minifasnet():
+    """MiniFASNet.py'yi dinamik import et."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("MiniFASNet", str(_MFAS_PY))
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _entropy(hist: np.ndarray) -> float:
-    """Shannon entropisi."""
-    p = hist[hist > 0]
-    return float(-np.sum(p * np.log2(p)))
+def _load_model(model_cls, path: Path):
+    model = model_cls(conv6_kernel=(5, 5))
+    state = torch.load(str(path), map_location="cpu", weights_only=False)
+    if isinstance(state, dict):
+        cleaned = {k.replace("module.", ""): v for k, v in state.items()}
+        model.load_state_dict(cleaned, strict=False)
+    model.eval()
+    return model
 
 
-def _laplacian_variance(gray: np.ndarray) -> float:
-    """Görüntünün frekans zenginliğini ölçer (odak + doku)."""
-    kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
-    from scipy.ndimage import convolve
-    lap = convolve(gray.astype(np.float32), kernel)
-    return float(np.var(lap))
+def _preprocess(face_bgr: np.ndarray) -> torch.Tensor:
+    img = cv2.resize(face_bgr, _INPUT_SIZE)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    # MiniFASNet sadece [0,1] scale kullanır, ImageNet norm YOK
+    return torch.from_numpy(img.transpose(2, 0, 1)).unsqueeze(0).float()
 
 
-def _local_contrast(gray: np.ndarray, block: int = 16) -> float:
-    """Blok blok standart sapma ortalaması — lokal doku zenginliği."""
-    h, w = gray.shape
-    stds = []
-    for r in range(0, h - block, block):
-        for c in range(0, w - block, block):
-            stds.append(np.std(gray[r:r+block, c:c+block]))
-    return float(np.mean(stds)) if stds else 0.0
-
-
-def _crop_face(bgr_frame: np.ndarray, bbox: tuple, margin: float = _FACE_MARGIN) -> np.ndarray:
-    """Yüz bölgesini bbox'tan kırp, margin ekle."""
+def _crop_face(frame: np.ndarray, bbox: tuple, margin: float = _FACE_MARGIN) -> np.ndarray:
     x1, y1, x2, y2 = [int(v) for v in bbox]
-    h, w = bgr_frame.shape[:2]
+    h, w = frame.shape[:2]
     mw = int((x2 - x1) * margin)
     mh = int((y2 - y1) * margin)
-    x1 = max(0, x1 - mw); y1 = max(0, y1 - mh)
-    x2 = min(w, x2 + mw); y2 = min(h, y2 + mh)
-    return bgr_frame[y1:y2, x1:x2]
+    return frame[max(0, y1-mh):min(h, y2+mh), max(0, x1-mw):min(w, x2+mw)]
 
 
 class TextureAnalyzer(LivenessDetectorBase):
-    """
-    Pasif liveness: kullanıcıdan ekstra hareket istenmez.
-    Yüz dokusu analiz edilerek gerçek mi sahte mi karar verilir.
-    """
-
     NAME = "texture"
+    _models_loaded = False
+    _model_v2  = None
+    _model_v1se = None
 
     def __init__(self) -> None:
         self._reset_state()
+        if not TextureAnalyzer._models_loaded:
+            self._load_models()
 
-    def _reset_state(self) -> None:
+    def _load_models(self):
+        try:
+            mfas = _import_minifasnet()
+            TextureAnalyzer._model_v2   = _load_model(mfas.MiniFASNetV2,   _MODEL_V2)
+            TextureAnalyzer._model_v1se = _load_model(mfas.MiniFASNetV1SE, _MODEL_V1SE)
+            TextureAnalyzer._models_loaded = True
+            import logging
+            logging.getLogger(__name__).info("MiniFASNet models loaded OK")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("MiniFASNet load error: %s", exc)
+
+    def _reset_state(self):
         self._scores: list[float] = []
         self._start_time = time.monotonic()
 
@@ -110,9 +99,26 @@ class TextureAnalyzer(LivenessDetectorBase):
     def reset(self) -> None:
         self._reset_state()
 
+    @torch.no_grad()
+    def _infer(self, face_bgr: np.ndarray) -> float:
+        if not self._models_loaded:
+            return 0.5
+        tensor = _preprocess(face_bgr)
+        # prob: [background, spoof, real] → index 2 = real face
+        p_v2   = F.softmax(self._model_v2(tensor),   dim=1)[0, 1].item()
+        p_v1se = F.softmax(self._model_v1se(tensor), dim=1)[0, 1].item()
+        # spoof score düşükse gerçek yüz → 1 - spoof_score
+        return 1.0 - (p_v2 + p_v1se) / 2.0
+
     def check(self, bgr_frame: np.ndarray, bbox: tuple) -> LivenessResult:
         elapsed   = time.monotonic() - self._start_time
-        timed_out = elapsed > _WINDOW_SECONDS
+        timed_out = elapsed > _WINDOW_SECS
+
+        if not self._models_loaded:
+            return LivenessResult(
+                is_live=False, score=0.0, method=self.NAME,
+                challenge_completed=False, message="Model yuklenemedi.",
+            )
 
         try:
             detector  = FaceDetector.get_instance()
@@ -131,72 +137,36 @@ class TextureAnalyzer(LivenessDetectorBase):
                 metadata={"frames": len(self._scores)},
             )
 
-        face_bbox = detection.single_face.bbox
-        face_crop = _crop_face(bgr_frame, face_bbox)
-
+        face_crop = _crop_face(bgr_frame, detection.single_face.bbox)
         if face_crop.size == 0:
             return LivenessResult(
                 is_live=False, score=0.0, method=self.NAME,
                 challenge_completed=False, message="Yuz kirpma hatasi.",
             )
 
-        import cv2
-        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+        real_score = self._infer(face_crop)
+        self._scores.append(real_score)
 
-        # ── Özellik hesaplamaları ──────────────────────────────────────────
-        try:
-            from scipy.ndimage import convolve as _conv
-            lap_var = _laplacian_variance(gray)
-        except ImportError:
-            # scipy yoksa Laplacian varyansını OpenCV ile hesapla
-            lap = cv2.Laplacian(gray, cv2.CV_64F)
-            lap_var = float(np.var(lap))
-
-        hist        = _lbp_histogram(gray)
-        entropy     = _entropy(hist)
-        loc_contrast = _local_contrast(gray)
-
-        # ── Normalleştirilmiş skor (0-1) ──────────────────────────────────
-        lap_score  = min(1.0, lap_var / (_LAP_VAR_THRESHOLD * 3))
-        ent_score  = min(1.0, max(0.0, (entropy - _HIST_ENTROPY_MIN) / 3.0))
-        cont_score = min(1.0, loc_contrast / (_LOCAL_CONTRAST_MIN * 2))
-
-        frame_score = (lap_score * 0.4 + ent_score * 0.35 + cont_score * 0.25)
-        self._scores.append(frame_score)
-
-        # ── Yeterli frame toplandıysa karar ver ───────────────────────────
-        if len(self._scores) >= _FRAMES_REQUIRED or timed_out:
-            avg_score = float(np.mean(self._scores))
-            is_live   = (
-                avg_score >= 0.40 and
-                lap_var   >= _LAP_VAR_THRESHOLD and
-                entropy   >= _HIST_ENTROPY_MIN and
-                loc_contrast >= _LOCAL_CONTRAST_MIN
-            )
-            # challenge_completed sadece is_live=True ise True
-            completed = is_live
-            if not is_live and not timed_out:
-                # Sahte tespit: score'ları temizle, tekrar dene
+        if len(self._scores) >= _FRAMES_REQ or timed_out:
+            avg  = float(np.mean(self._scores))
+            live = avg >= _LIVE_THRESHOLD
+            done = live
+            if not live and not timed_out:
                 self._scores.clear()
         else:
-            avg_score = frame_score
-            is_live   = False
-            completed = False
+            avg  = real_score
+            live = False
+            done = False
 
         return LivenessResult(
-            is_live=is_live,
-            score=round(avg_score if completed else frame_score, 3),
+            is_live=live,
+            score=round(avg, 3),
             method=self.NAME,
-            challenge_completed=completed,
+            challenge_completed=done,
             message=(
-                "Tamamlandi!" if (completed and is_live)
-                else "Sahte goruntu tespit edildi." if (completed and not is_live)
-                else f"Analiz ediliyor... ({len(self._scores)}/{_FRAMES_REQUIRED})"
+                "Tamamlandi!" if done
+                else "Sahte goruntu!" if (not live and len(self._scores) == 0 and elapsed > 2)
+                else f"Analiz: {min(len(self._scores), _FRAMES_REQ)}/{_FRAMES_REQ} ({avg:.2f})"
             ),
-            metadata={
-                "lap_var":      round(lap_var, 1),
-                "entropy":      round(entropy, 3),
-                "loc_contrast": round(loc_contrast, 1),
-                "frames":       len(self._scores),
-            },
+            metadata={"real_score": round(avg, 3), "frames": len(self._scores)},
         )
