@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import CameraFeed, { CameraFeedHandle } from "@/components/CameraFeed";
 import * as api from "@/lib/api";
 import type { VerifyResponse } from "@/types/api";
@@ -21,6 +22,7 @@ const INSTRUCTIONS: Record<string, string> = {
 const STEP_LABELS = ["Liveness 1", "Liveness 2", "Biyometrik"];
 
 export default function VerifyPage() {
+  const router       = useRouter();
   const cameraRef    = useRef<CameraFeedHandle>(null);
   const pollingRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const verifyingRef = useRef(false);
@@ -91,6 +93,10 @@ export default function VerifyPage() {
       if (!frame) throw new Error("Kare yakalanamadı.");
       const res = await api.verify({ session_id: sessId, frame });
       setResult(res); setStep("done");
+      if (res.access_granted && res.matched_user) {
+        sessionStorage.setItem("verified_user", res.matched_user);
+        setTimeout(() => router.push("/dashboard"), 1500);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Doğrulama hatası"); setStep("idle"); }
   }
 
