@@ -128,7 +128,7 @@ def main() -> None:
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("[WARN] Frame capture failed, retrying…")
+            print("[WARN] Frame capture failed, retrying...")
             time.sleep(0.05)
             continue
 
@@ -157,7 +157,7 @@ def main() -> None:
 
         # ── Draw result ───────────────────────────────────────────────────
         display = frame.copy()
-        status_msg = "Waiting…"
+        status_msg = "Waiting..."
 
         if last_result:
             r = last_result
@@ -174,7 +174,7 @@ def main() -> None:
                     draw_bbox(display, bbox, RED, label="Unknown", score=score)
 
         draw_overlay(display, status_msg, display_fps)
-        cv2.imshow("Face Recognition – press Q to quit", display)
+        cv2.imshow("Face Recognition - press Q to quit", display)
 
         # ── Key handling ─────────────────────────────────────────────────
         key = cv2.waitKey(1) & 0xFF

@@ -161,7 +161,7 @@ def main() -> None:
             frame, len(captured_frames), target_frames,
             auto_capture, face_ok, status_msg, args.name,
         )
-        cv2.imshow(f"Register: {args.name} – press Q to cancel", display)
+        cv2.imshow(f"Register: {args.name} - press Q to cancel", display)
 
         key = cv2.waitKey(1) & 0xFF
 
@@ -193,7 +193,7 @@ def main() -> None:
     cv2.destroyAllWindows()
 
     # ── Send to backend ───────────────────────────────────────────────────────
-    print(f"[INFO] Sending {len(captured_frames)} frames to {register_url}…")
+    print(f"[INFO] Sending {len(captured_frames)} frames to {register_url}...")
     payload = {"name": args.name, "frames": captured_frames}
 
     try:
@@ -208,12 +208,12 @@ def main() -> None:
         return
 
     if resp.status_code == 200 and result.get("success"):
-        print("\n✅ Registration successful!")
+        print("\n[SUCCESS] Registration successful!")
         print(f"   Name      : {result['name']}")
         print(f"   User ID   : {result['user_id']}")
         print(f"   Frames used: {result['frames_used']}")
     else:
-        print(f"\n❌ Registration failed (HTTP {resp.status_code})")
+        print(f"\n[FAILED] Registration failed (HTTP {resp.status_code})")
         print(f"   Detail: {result.get('detail') or result.get('message')}")
 
 
