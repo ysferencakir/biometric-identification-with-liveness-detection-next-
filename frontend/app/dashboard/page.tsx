@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Image from "next/image";
 import { ThemeToggle } from "@/components/ThemeProvider";
 
@@ -42,13 +43,15 @@ export default function DashboardPage() {
   const [name,     setName]     = useState("Öğrenci");
   const [activeNav, setActiveNav] = useState("Anasayfa");
 
+  const applyName = useCallback((n: string) => setName(n), []);
+
   useEffect(() => {
     const isDev = new URLSearchParams(window.location.search).get("dev") === "1";
-    if (isDev) { setName("Geliştirici"); return; }
-    const stored = sessionStorage.getItem("verified_user");
-    if (!stored) { router.replace("/"); return; }
-    setName(stored);
-  }, [router]);
+    const newName = isDev ? "Geliştirici" : sessionStorage.getItem("verified_user");
+    if (!isDev && !newName) { router.replace("/"); return; }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (newName) applyName(newName);
+  }, [router, applyName]);
 
   function handleLogout() {
     sessionStorage.removeItem("verified_user");
@@ -61,13 +64,13 @@ export default function DashboardPage() {
     <div className="flex min-h-screen" style={{ background: "var(--bg-base)", color: "var(--text-primary)" }}>
 
       {/* SIDEBAR */}
-      <aside className="w-56 flex-shrink-0 flex flex-col"
+      <aside className="w-56 shrink-0 flex flex-col"
         style={{ background: "var(--bg-sidebar)", borderRight: "1px solid var(--border)" }}>
 
         {/* Logo */}
         <div className="flex items-center gap-3 px-5 py-4"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="w-10 h-10 relative flex-shrink-0">
+          <div className="w-10 h-10 relative shrink-0">
             <Image src="/emu-dau-logo.png" alt="DAÜ" fill className="object-contain" />
           </div>
           <span className="text-sm font-bold leading-tight" style={{ color: "#93c5fd" }}>
@@ -78,7 +81,7 @@ export default function DashboardPage() {
         {/* Kullanıcı */}
         <div className="flex items-center gap-3 px-5 py-4"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
+          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
             style={{ background: "linear-gradient(135deg,#1d4ed8,#2563eb)", color: "white" }}>
             {initials}
           </div>
@@ -98,7 +101,7 @@ export default function DashboardPage() {
                 background: activeNav === item.label ? "rgba(59,130,246,0.15)" : "transparent",
                 color: activeNav === item.label ? "#93c5fd" : "#94a3b8",
               }}>
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
               </svg>
               {item.label}
@@ -122,7 +125,7 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0">
 
         {/* Topbar */}
-        <header className="flex items-center justify-between px-6 py-3 flex-shrink-0"
+        <header className="flex items-center justify-between px-6 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-sidebar)" }}>
           <div className="flex items-center gap-3">
             <svg className="w-5 h-5" style={{ color: "var(--text-faint)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -133,6 +136,14 @@ export default function DashboardPage() {
             </svg>
           </div>
           <div className="flex items-center gap-3">
+            <Link href="/banka"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10.5L12 3l9 7.5V20.25a.75.75 0 01-.75.75H15a.75.75 0 01-.75-.75v-4.5a.75.75 0 00-.75-.75h-3a.75.75 0 00-.75.75v4.5a.75.75 0 01-.75.75H3.75a.75.75 0 01-.75-.75V10.5z" />
+              </svg>
+              Banka Girişi
+            </Link>
             <ThemeToggle />
             <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
               style={{ background: "linear-gradient(135deg,#1d4ed8,#2563eb)", color: "white" }}>
@@ -173,7 +184,7 @@ export default function DashboardPage() {
                 <div key={i} className="flex flex-col gap-0.5">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs font-medium leading-snug" style={{ color: "var(--text-primary)" }}>{n.title}</p>
-                    <span className="text-xs flex-shrink-0" style={{ color: "var(--text-faint)" }}>{n.date}</span>
+                    <span className="text-xs shrink-0" style={{ color: "var(--text-faint)" }}>{n.date}</span>
                   </div>
                   <p className="text-xs" style={{ color: "var(--text-faint)" }}>{n.source}</p>
                 </div>
@@ -195,7 +206,7 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-3">
               {EMAILS.map((e, i) => (
                 <div key={i} className="flex items-start gap-3">
-                  <div className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
+                  <div className="w-7 h-7 rounded flex items-center justify-center shrink-0"
                     style={{ background: "rgba(59,130,246,0.15)" }}>
                     <svg className="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -205,7 +216,7 @@ export default function DashboardPage() {
                     <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{e.from}</p>
                     <p className="text-xs font-medium truncate" style={{ color: "#60a5fa" }}>{e.subject}</p>
                   </div>
-                  <span className="text-xs flex-shrink-0" style={{ color: "var(--text-faint)" }}>{e.date}</span>
+                  <span className="text-xs shrink-0" style={{ color: "var(--text-faint)" }}>{e.date}</span>
                 </div>
               ))}
             </div>

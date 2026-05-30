@@ -15,36 +15,101 @@ interface TestResult {
 
 const POLL_MS = 150;
 
+// Parmak görseli: kaç parmak kaldırılacağını gösterir
+function FingerDisplay({ target, detected }: { target: number; detected: number | null }) {
+  return (
+    <div className="flex flex-col items-center gap-3">
+      {/* Hedef büyük rakam */}
+      <div
+        className="w-24 h-24 rounded-2xl flex items-center justify-center text-6xl font-black select-none"
+        style={{
+          background: "var(--accent)",
+          boxShadow: "0 4px 24px var(--accent-glow)",
+          color: "white",
+          lineHeight: 1,
+        }}
+      >
+        {target}
+      </div>
+
+      {/* 5 parmak indikatörü */}
+      <div className="flex gap-1.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <div
+            key={n}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold transition-all"
+            style={{
+              background: n <= target ? "var(--accent)" : "var(--bg-elevated)",
+              color: n <= target ? "white" : "var(--text-muted)",
+              border: n <= target ? "none" : "1px solid var(--border)",
+              opacity: detected !== null && n === detected ? 0.6 : 1,
+            }}
+          >
+            {n}
+          </div>
+        ))}
+      </div>
+
+      {/* Algılanan sayı (varsa) */}
+      {detected !== null && (
+        <p className="text-xs" style={{ color: detected === target ? "var(--success)" : "#fca5a5" }}>
+          {detected === target ? "✓ Doğru!" : `Algılanan: ${detected}`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function TestUIPage() {
   const cameraRef  = useRef<CameraFeedHandle>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionRef = useRef("");
 
-  const [challenges,        setChallenges]        = useState<string[]>([]);
-  const [selected,          setSelected]          = useState("");
-  const [results,           setResults]           = useState<TestResult[]>([]);
-  const [running,           setRunning]           = useState(false);
-  const [progress,          setProgress]          = useState("");
-  const [error,             setError]             = useState("");
+  const [challenges,   setChallenges]   = useState<string[]>([]);
+  const [selected,     setSelected]     = useState("");
+  const [results,      setResults]      = useState<TestResult[]>([]);
+  const [running,      setRunning]      = useState(false);
+  const [progress,     setProgress]     = useState("");
+  const [error,        setError]        = useState("");
 
-  useEffect(() => {
-    api.getAvailableDetectors()
-      .then(r => { const n = r.detectors.map(d => d.name); setChallenges(n); if (n.length) setSelected(n[0]); })
-      .catch(() => {});
-    return () => stopPolling();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Parmak sayma challenge'ı için
+  const [fingerTarget,   setFingerTarget]   = useState<number | null>(null);
+  const [fingerDetected, setFingerDetected] = useState<number | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     sessionRef.current = "";
     setRunning(false);
     setProgress("");
+    setFingerTarget(null);
+    setFingerDetected(null);
   }, []);
+
+  useEffect(() => {
+    api.getAvailableDetectors()
+      .then(r => { const n = r.detectors.map(d => d.name); setChallenges(n); if (n.length) setSelected(n[0]); })
+      .catch(() => {});
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  // Instruction metninden hedef sayıyı parse et: "3 parmagunuzu..." → 3
+  function parseFingerTarget(instruction: string): number | null {
+    const match = instruction.match(/^(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  // Algılanan sayıyı parse et: "...algilanan: 2" → 2
+  function parseFingerDetected(instruction: string): number | null {
+    const match = instruction.match(/algilanan:\s*(\d+)/i);
+    return match ? parseInt(match[1], 10) : null;
+  }
 
   async function startTest() {
     if (running) { stopPolling(); return; }
     setError(""); setProgress("Session açılıyor…");
+    setFingerTarget(null);
+    setFingerDetected(null);
+
     try {
       const sess = await api.createSession();
       sessionRef.current = sess.session_id;
@@ -58,7 +123,18 @@ export default function TestUIPage() {
         try {
           const res = await api.submitLiveness({ session_id: sessionRef.current, challenge_name: selected, frame });
           const ms  = Math.round(performance.now() - t0);
-          setProgress(res.instruction || "…");
+          const instr = res.instruction || "…";
+          setProgress(instr);
+
+          // Parmak sayma challenge için hedef/algılanan güncelle
+          if (selected === "finger_counting") {
+            const t = parseFingerTarget(instr);
+            const d = parseFingerDetected(instr);
+            if (t !== null) setFingerTarget(t);
+            if (d !== null) setFingerDetected(d);
+            if (instr === "Tamamlandi!") setFingerDetected(fingerTarget);
+          }
+
           if (res.passed) {
             stopPolling();
             setResults(prev => [{
@@ -74,6 +150,8 @@ export default function TestUIPage() {
 
   const passCount = results.filter(r => r.passed).length;
   const avgMs     = results.length ? Math.round(results.reduce((s, r) => s + r.latencyMs, 0) / results.length) : 0;
+
+  const isFingerChallenge = selected === "finger_counting";
 
   return (
     <main className="relative min-h-screen p-6 z-10">
@@ -103,6 +181,15 @@ export default function TestUIPage() {
               <CameraFeed ref={cameraRef} className="w-full h-full" />
             </div>
 
+            {/* Parmak sayma hedef göstergesi */}
+            {isFingerChallenge && running && fingerTarget !== null && (
+              <div className="rounded-2xl p-4 flex flex-col items-center gap-1"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--accent)", boxShadow: "0 0 20px rgba(99,102,241,0.12)" }}>
+                <p className="text-xs font-medium mb-2" style={{ color: "var(--text-muted)" }}>HEDEF SAYI</p>
+                <FingerDisplay target={fingerTarget} detected={fingerDetected} />
+              </div>
+            )}
+
             {/* Modül seçimi */}
             <div className="rounded-2xl p-4" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
               <p className="text-xs font-medium mb-3" style={{ color: "var(--text-muted)" }}>MODÜL SEÇ</p>
@@ -117,18 +204,18 @@ export default function TestUIPage() {
                       border: selected === ch ? "none" : "1px solid var(--border)",
                       boxShadow: selected === ch ? "0 2px 12px var(--accent-glow)" : "none",
                     }}>
-                    {ch}
+                    {ch === "finger_counting" ? "✋ " + ch : ch}
                   </button>
                 ))}
                 {challenges.length === 0 && (
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>Backend'e bağlanılamıyor…</p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>Backend&apos;e bağlanılamıyor…</p>
                 )}
               </div>
 
               {running && progress && (
                 <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-sm"
                   style={{ background: "rgba(59,130,246,0.08)", color: "#93c5fd" }}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0 pulse-soft" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 pulse-soft" />
                   {progress}
                 </div>
               )}

@@ -3,6 +3,7 @@ import type {
   LivenessAvailableResponse,
   LivenessSubmitRequest,
   LivenessSubmitResponse,
+  RecognitionResponse,
   RegisterRequest,
   RegisterResponse,
   SessionCreateResponse,
@@ -53,6 +54,14 @@ export const submitLiveness = (body: LivenessSubmitRequest) =>
   request<LivenessSubmitResponse>("/liveness/submit", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+
+// ── Recognition ───────────────────────────────────────────────────────────────
+
+export const recognize = (image_b64: string) =>
+  request<RecognitionResponse>("/recognize", {
+    method: "POST",
+    body: JSON.stringify({ image_b64 }),
   });
 
 // ── Verify ────────────────────────────────────────────────────────────────────

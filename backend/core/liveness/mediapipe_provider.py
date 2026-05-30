@@ -31,9 +31,13 @@ except ImportError:
     logger.warning("MediaPipe not found. Install: pip install mediapipe")
 
 # Blendshape indeksleri (MediaPipe Face Landmarker 0.10.x)
-BLENDSHAPE_INDEX_EYE_BLINK_LEFT = 9
+# Sıralama: _neutral(0), browDown*(1-2), brow*(3-5), cheek*(6-8),
+# eyeBlink*(9-10), eyeLookDown*(11-12), eyeLookIn*(13-14),
+# eyeLookOut*(15-16), eyeLookUp*(17-18), eyeSquint*(19-20),
+# eyeWide*(21-22), jawForward(23), jawLeft(24), jawOpen(25), jawRight(26)…
+BLENDSHAPE_INDEX_EYE_BLINK_LEFT  = 9
 BLENDSHAPE_INDEX_EYE_BLINK_RIGHT = 10
-BLENDSHAPE_INDEX_JAW_OPEN = 12
+BLENDSHAPE_INDEX_JAW_OPEN        = 25  # index 12 eyeLookDownRight'dır!
 
 
 class MediaPipeProvider:
@@ -150,59 +154,38 @@ class MediaPipeProvider:
     ) -> tuple[float, float]:
         """
         Extract eye blink scores from MediaPipe result.
-
         Blendshape values: 0.0 = eyes open, 1.0 = eyes closed
-
-        Parameters
-        ----------
-        result : vision.FaceLandmarkerResult
-            MediaPipe detection result
-
-        Returns
-        -------
-        tuple[float, float]
-            (left_blink_score, right_blink_score) — each in [0, 1]
         """
         if not result or not result.face_blendshapes:
             return 0.0, 0.0
 
-        blendshapes = result.face_blendshapes[0]  # First face
-
+        blendshapes = result.face_blendshapes[0]
         left_blink = 0.0
         right_blink = 0.0
 
-        for blendshape in blendshapes:
-            if blendshape.index == BLENDSHAPE_INDEX_EYE_BLINK_LEFT:
-                left_blink = float(blendshape.score)
-            elif blendshape.index == BLENDSHAPE_INDEX_EYE_BLINK_RIGHT:
-                right_blink = float(blendshape.score)
+        for bs in blendshapes:
+            name = getattr(bs, "category_name", None)
+            if name == "eyeBlinkLeft" or (name is None and bs.index == BLENDSHAPE_INDEX_EYE_BLINK_LEFT):
+                left_blink = float(bs.score)
+            elif name == "eyeBlinkRight" or (name is None and bs.index == BLENDSHAPE_INDEX_EYE_BLINK_RIGHT):
+                right_blink = float(bs.score)
 
         return left_blink, right_blink
 
     def get_jaw_open_score(self, result: vision.FaceLandmarkerResult) -> float:
         """
         Extract jaw open (mouth opening) score from MediaPipe result.
-
         Blendshape value: 0.0 = mouth closed, 1.0 = mouth open
-
-        Parameters
-        ----------
-        result : vision.FaceLandmarkerResult
-            MediaPipe detection result
-
-        Returns
-        -------
-        float
-            Jaw open score in [0, 1]
         """
         if not result or not result.face_blendshapes:
             return 0.0
 
-        blendshapes = result.face_blendshapes[0]  # First face
+        blendshapes = result.face_blendshapes[0]
 
-        for blendshape in blendshapes:
-            if blendshape.index == BLENDSHAPE_INDEX_JAW_OPEN:
-                return float(blendshape.score)
+        for bs in blendshapes:
+            name = getattr(bs, "category_name", None)
+            if name == "jawOpen" or (name is None and bs.index == BLENDSHAPE_INDEX_JAW_OPEN):
+                return float(bs.score)
 
         return 0.0
 

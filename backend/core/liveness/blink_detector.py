@@ -29,20 +29,19 @@ _LEFT_EYE  = [36, 37, 38, 39, 40, 41]
 _RIGHT_EYE = [42, 43, 44, 45, 46, 47]
 
 # Baseline EMA parametresi — yavaş güncelleme (göz kırpmalar baseline'ı bozmasın)
-EMA_ALPHA        = 0.05      # düşük alpha → baseline yavaş değişir
+EMA_ALPHA        = 0.1       # daha hızlı adaptasyon, anlık değerlere daha çabuk uyum sağlar
 
 # Dip eşiği: baseline * DIP_FACTOR altına düşerse göz kapalı sayılır
-# 0.85 = baseline'ın %15 altı → çok küçük göz aralığı için de çalışır
-DIP_FACTOR       = 0.85
+# 0.88 = baseline'ın %12 altı → daha hızlı blink algılaması
+DIP_FACTOR       = 0.88
 
 # Gürültü filtresi
-CONSEC_FRAMES    = 2         # kaç ardışık frame dip görülmeli
-MIN_BLINKS       = 2
-WINDOW_SECONDS   = 15.0
+CONSEC_FRAMES    = 1         # kaç ardışık frame dip görülmeli
+MIN_BLINKS       = 2         # iki kırpma isteği
+WINDOW_SECONDS   = 10.0      # timeout daha kısa, hızlı yeni deneme sağlar
 
 # Kalibrasyon: ilk N frame'de baseline kurulsun
-CALIB_FRAMES     = 20
-
+CALIB_FRAMES     = 8        # daha hızlı kalibrasyon
 
 def _ear(landmarks: np.ndarray, idx: list) -> float:
     p = landmarks[idx, :2]
