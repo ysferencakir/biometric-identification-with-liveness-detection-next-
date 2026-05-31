@@ -42,3 +42,8 @@ Pillow>=9.0.0
 # ── Optional: future liveness / ML work ──────────────────────────────────────
 # torch>=2.3.0
 # torchvision>=0.18.0
+
+# ── Speech Liveness Detection ─────────────────────────────────────────────────
+faster-whisper==1.0.3
+rapidfuzz==3.9.3
+
