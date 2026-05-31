@@ -48,11 +48,9 @@ export default function Home() {
             </svg>
             Biometric ID ile Giriş Yap
           </Link>
-
           <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
             Yüz tanıma ve canlılık tespiti ile güvenli giriş
           </p>
-
           {/* Ayırıcı */}
           <div className="w-full flex items-center gap-3">
             <div className="flex-1 h-px" style={{ background: "var(--border)" }} />

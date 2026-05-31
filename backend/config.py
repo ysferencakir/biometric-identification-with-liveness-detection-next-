@@ -38,8 +38,13 @@ class Settings(BaseSettings):
 
     # ── Session & Liveness ────────────────────────────────────────────────
     SESSION_TTL_SECONDS: int = 300
-    LIVENESS_DETECTORS: list[str] = ["blink", "head_movement", "mouth_movement", "finger_counting"]
+    LIVENESS_DETECTORS: list[str] = ["blink", "new_blink", "head_movement", "mouth_movement", "finger_counting", "speech"]
     LIVENESS_CHALLENGES_COUNT: int = 2
+
+    # ── Whisper Speech-to-Text ────────────────────────────────────────────
+    WHISPER_MODEL_SIZE: str = "base"       # "tiny", "base", "small"
+    WHISPER_DEVICE: str = "cpu"            # "cpu" or "cuda"
+    WHISPER_COMPUTE_TYPE: str = "int8"     # "int8" for CPU, "float16" for CUDA
 
     model_config = SettingsConfigDict(
         env_file=".env",

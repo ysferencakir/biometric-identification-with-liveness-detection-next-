@@ -41,3 +41,8 @@ ml_dtypes>=0.5.1                # TensorFlow compatibility
 # ── Optional: future liveness / ML work ──────────────────────────────────────
 # torch>=2.3.0
 # torchvision>=0.18.0
+
+# ── Speech Liveness Detection ─────────────────────────────────────────────────
+faster-whisper==1.0.3
+rapidfuzz==3.9.3
+

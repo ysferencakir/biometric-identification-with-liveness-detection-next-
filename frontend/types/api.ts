@@ -115,3 +115,21 @@ export interface UsersListResponse {
 export interface ApiError {
   detail: string;
 }
+
+// ── Speech Liveness ───────────────────────────────────────────────────────────
+
+export interface SpeechChallengeResponse {
+  challenge_id: string;
+  target_text: string;
+}
+
+export interface SpeechLivenessResponse {
+  success: boolean;
+  target_text: string;
+  transcript: string;
+  similarity: number;
+  threshold: number;
+  word_match_ratio: number;
+  duration_seconds: number;
+}
+

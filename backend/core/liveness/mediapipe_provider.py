@@ -29,6 +29,10 @@ try:
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
     logger.warning("MediaPipe not found. Install: pip install mediapipe")
+    class DummyVision:
+        class FaceLandmarkerResult:
+            pass
+    vision = DummyVision
 
 # Blendshape indeksleri (MediaPipe Face Landmarker 0.10.x)
 # Sıralama: _neutral(0), browDown*(1-2), brow*(3-5), cheek*(6-8),

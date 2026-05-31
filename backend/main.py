@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routes import router
+from api.speech_liveness_routes import router as speech_router
 from config import settings
 from db.store import init_db
 
@@ -107,6 +108,7 @@ async def _global_exc(request: Request, exc: Exception) -> JSONResponse:
     )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(speech_router, prefix="/api/v1")
 
 
 # ── Direct run ────────────────────────────────────────────────────────────────

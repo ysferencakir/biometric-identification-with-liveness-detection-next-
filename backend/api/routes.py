@@ -28,6 +28,7 @@ from api.schemas import (
     RecognizeFrameRequest,
     RegisterRequest,
     RegisterResponse,
+    SessionCreateRequest,
     SessionCreateResponse,
     SessionStatusResponse,
     UserSummary,
@@ -278,16 +279,26 @@ def get_available_detectors() -> LivenessAvailableResponse:
         if detector:
             instruction = detector.get_instruction()
             detectors.append(DetectorInfo(name=name, instruction=instruction))
+            
+    # Explicitly append speech challenge since it's a modular component
+    if "speech" in settings.LIVENESS_DETECTORS:
+        detectors.append(DetectorInfo(name="speech", instruction="Lütfen ekrandaki cümleyi sesli okuyun."))
+        
     return LivenessAvailableResponse(detectors=detectors)
 
 
 @router.post("/session/create", response_model=SessionCreateResponse, tags=["Session"])
-def create_session() -> SessionCreateResponse:
+def create_session(body: Optional[SessionCreateRequest] = None) -> SessionCreateResponse:
     """
     Start a new verification session.
     Randomly picks LIVENESS_CHALLENGES_COUNT detectors from the available pool.
     """
+    exclude_speech = body.exclude_speech if body else False
+    
     available = settings.LIVENESS_DETECTORS
+    if exclude_speech:
+        available = [d for d in available if d != "speech"]
+        
     count = min(settings.LIVENESS_CHALLENGES_COUNT, len(available))
     challenges = random.sample(available, k=count)
 

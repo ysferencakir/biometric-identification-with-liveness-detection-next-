@@ -18,8 +18,10 @@ const POLL_MS = 120;
 
 const INSTRUCTIONS: Record<string, string> = {
   blink:          "Lütfen doğal şekilde iki kez göz kırpın.",
+  new_blink:      "Lütfen yeni yöntemle (New Blink) doğal şekilde iki kez göz kırpın.",
   head_movement:  "Başınızı sağa, sonra sola çevirin.",
   mouth_movement: "Ağzınızı iki kez açıp kapatın.",
+  speech:         "Lütfen ekrandaki cümleyi sesli okuyun.",
 };
 
 const STEP_LABELS = ["Liveness 1", "Liveness 2", "Banka"];
@@ -116,6 +118,7 @@ export default function BankaPage() {
   const cameraRef = useRef<CameraFeedHandle>(null);
   const pollingRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const verifyingRef = useRef(false);
+  const sessionRef   = useRef("");
 
   const [step,       setStep]       = useState<Step>("idle");
   const [challenges, setChallenges] = useState<ChallengeState[]>([]);
@@ -123,6 +126,19 @@ export default function BankaPage() {
   const [progress,   setProgress]   = useState("");
   const [error,      setError]      = useState("");
   const [userName,   setUserName]   = useState("");
+
+  // Speech Liveness States
+  const [speechChallengeId, setSpeechChallengeId] = useState("");
+  const [speechTargetText, setSpeechTargetText] = useState("");
+  const [speechTranscript, setSpeechTranscript] = useState("");
+  const [speechState, setSpeechState] = useState<"idle" | "loading" | "recording" | "verifying" | "success" | "failed">("idle");
+  const [speechTimeLeft, setSpeechTimeLeft] = useState(25.0);
+
+  const speechRecorderRef = useRef<MediaRecorder | null>(null);
+  const speechChunksRef = useRef<Blob[]>([]);
+  const speechTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speechStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("verified_user");
@@ -135,7 +151,31 @@ export default function BankaPage() {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
   }, []);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
+  const cleanupSpeechMedia = useCallback(() => {
+    if (speechTimerRef.current) {
+      clearInterval(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+    if (speechStreamRef.current) {
+      speechStreamRef.current.getTracks().forEach(track => track.stop());
+      speechStreamRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        // already stopped
+      }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopPolling();
+      cleanupSpeechMedia();
+    };
+  }, [stopPolling, cleanupSpeechMedia]);
 
   // Ref to allow self-call inside setTimeout without TDZ issues
   const startPollingRef = useRef<(sessId: string, ch: ChallengeState, idx: number, all: ChallengeState[]) => void>(() => {});
@@ -162,7 +202,13 @@ export default function BankaPage() {
             const next = idx + 1;
             setCurrentIdx(next);
             setStep(next === 1 ? "challenge_2" : "challenge_1");
-            setTimeout(() => startPollingRef.current(sessId, updated[next], next, updated), 800);
+            
+            const nextCh = updated[next];
+            if (nextCh.name === "speech") {
+              setupSpeechChallenge();
+            } else {
+              setTimeout(() => startPollingRef.current(sessId, nextCh, next, updated), 800);
+            }
           }
         }
       } catch (e) { setError(e instanceof Error ? e.message : "Hata"); stopPolling(); }
@@ -171,12 +217,174 @@ export default function BankaPage() {
 
   useEffect(() => { startPollingRef.current = startPolling; }, [startPolling]);
 
-  async function startSession() {
+  async function setupSpeechChallenge() {
+    setSpeechState("loading");
+    setSpeechTranscript("");
+    setError("");
+    try {
+      const res = await api.getSpeechChallenge();
+      setSpeechChallengeId(res.challenge_id);
+      setSpeechTargetText(res.target_text);
+      setSpeechState("idle");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cümle yüklenemedi.");
+      setSpeechState("idle");
+    }
+  }
+
+  async function startSpeechRecording() {
+    setError("");
+    cleanupSpeechMedia();
+    setSpeechState("recording");
+    setSpeechTimeLeft(25.0);
+    speechChunksRef.current = [];
+    setSpeechTranscript(""); // Clear old transcript
+
+    // Initialize Web Speech API for Real-Time feedback (WOW Factor)
+    try {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "tr-TR";
+        
+        rec.onresult = (event: any) => {
+          let interimTranscript = "";
+          let finalTranscript = "";
+          
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+          
+          const liveText = finalTranscript + interimTranscript;
+          if (liveText.trim()) {
+            setSpeechTranscript(liveText);
+          }
+        };
+        
+        recognitionRef.current = rec;
+        rec.start();
+      }
+    } catch (speechApiErr) {
+      console.warn("Web Speech API not supported or failed to initialize:", speechApiErr);
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      speechStreamRef.current = stream;
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      speechRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          speechChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(speechChunksRef.current, { type: "audio/webm" });
+        await handleVerifySpeech(audioBlob);
+      };
+
+      mediaRecorder.start();
+
+      const timer = setInterval(() => {
+        setSpeechTimeLeft((prev) => {
+          if (prev <= 0.1) {
+            clearInterval(timer);
+            if (mediaRecorder.state === "recording") {
+              mediaRecorder.stop();
+            }
+            return 0;
+          }
+          return Number((prev - 0.1).toFixed(1));
+        });
+      }, 100);
+      speechTimerRef.current = timer;
+
+    } catch (err) {
+      setError("Mikrofon izni alınamadı. Lütfen tarayıcı ayarlarını kontrol edin.");
+      setSpeechState("idle");
+      cleanupSpeechMedia();
+    }
+  }
+
+  function stopSpeechRecordingEarly() {
+    if (speechRecorderRef.current && speechRecorderRef.current.state === "recording") {
+      speechRecorderRef.current.stop();
+      setSpeechState("verifying");
+    }
+    cleanupSpeechMedia();
+  }
+
+  async function handleVerifySpeech(blob: Blob) {
+    setSpeechState("verifying");
+    setError("");
+    try {
+      const res = await api.verifySpeechLiveness(speechChallengeId, blob, sessionRef.current);
+      setSpeechTranscript(res.transcript);
+      if (res.success) {
+        setSpeechState("success");
+        const updated = challenges.map((c, i) => i === currentIdx ? { ...c, passed: true } : c);
+        setChallenges(updated);
+        
+        const allPassed = updated.every(c => c.passed);
+        if (allPassed) {
+          if (verifyingRef.current) return;
+          verifyingRef.current = true;
+          setTimeout(() => {
+            setStep("done");
+          }, 1500);
+        } else {
+          const next = currentIdx + 1;
+          setTimeout(() => {
+            setCurrentIdx(next);
+            setStep(next === 1 ? "challenge_2" : "challenge_1");
+            const nextCh = updated[next];
+            if (nextCh.name === "speech") {
+              setupSpeechChallenge();
+            } else {
+              startPolling(sessionRef.current, nextCh, next, updated);
+            }
+          }, 1500);
+        }
+      } else {
+        setSpeechState("failed");
+        setError("Cümle eşleşmedi, lütfen tekrar deneyin.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Doğrulama sunucu hatası.");
+      setSpeechState("failed");
+    }
+  }
+
+  async function handleSkipSpeech() {
+    cleanupSpeechMedia();
+    setError("");
+    setProgress("");
+    await startSession(true);
+  }
+
+  async function startSession(excludeSpeech = false) {
+    const shouldExclude = excludeSpeech === true;
+    stopPolling();
+    cleanupSpeechMedia();
     setError(""); setProgress(""); setChallenges([]);
     verifyingRef.current = false;
     setStep("creating");
+    setSpeechState("idle");
+    setSpeechTargetText("");
+    setSpeechTranscript("");
+
     try {
-      const session = await api.createSession();
+      const session = await api.createSession(shouldExclude);
+      sessionRef.current = session.session_id;
       const ch = session.challenges.map(name => ({
         name,
         instruction: INSTRUCTIONS[name] ?? "Kameraya bakın.",
@@ -185,18 +393,28 @@ export default function BankaPage() {
       setChallenges(ch);
       setCurrentIdx(0);
       setStep("challenge_1");
-      startPolling(session.session_id, ch[0], 0, ch);
+
+      if (ch[0].name === "speech") {
+        setupSpeechChallenge();
+      } else {
+        startPolling(session.session_id, ch[0], 0, ch);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Bağlantı hatası"); setStep("idle"); }
   }
 
   function reset() {
     stopPolling();
+    cleanupSpeechMedia();
     verifyingRef.current = false;
+    sessionRef.current = "";
     setStep("idle");
     setError("");
     setProgress("");
     setChallenges([]);
     setCurrentIdx(0);
+    setSpeechState("idle");
+    setSpeechTargetText("");
+    setSpeechTranscript("");
   }
 
   // Banka arayüzü göster
@@ -204,7 +422,7 @@ export default function BankaPage() {
     return <BankDashboard name={userName} onExit={() => router.push("/dashboard")} />;
   }
 
-  const activeStep  = step === "challenge_1" ? 0 : step === "challenge_2" ? 1 : step === "done" ? 2 : -1;
+  const activeStep  = step === "challenge_1" ? 0 : step === "challenge_2" ? 1 : -1;
   const currentCh   = challenges[currentIdx];
   const inChallenge = step === "challenge_1" || step === "challenge_2";
 
@@ -292,7 +510,7 @@ export default function BankaPage() {
                 {error}
               </p>
             )}
-            <button onClick={startSession}
+            <button onClick={() => startSession(false)}
               className="w-full py-3 rounded-xl font-semibold text-white transition-all"
               style={{ background: "linear-gradient(135deg,#059669,#10b981)", boxShadow: "0 4px 20px rgba(16,185,129,0.3)" }}>
               Doğrulamayı Başlat
@@ -307,21 +525,133 @@ export default function BankaPage() {
             <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>
               Adım {currentIdx + 1} / 2 — <span className="font-mono">{currentCh.name}</span>
             </p>
-            <p className="font-semibold mb-4">{currentCh.instruction}</p>
+            
+            {currentCh.name === "speech" ? (
+              <div className="flex flex-col items-center">
+                {speechState === "loading" ? (
+                  <div className="py-4">
+                    <p className="text-sm pulse-soft" style={{ color: "var(--text-muted)" }}>Yeni cümle üretiliyor…</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="font-semibold text-xs tracking-wider uppercase mb-1.5" style={{ color: "var(--text-muted)" }}>
+                      Lütfen Bu Cümleyi Sesli Okuyun:
+                    </p>
+                    <p className="text-sm md:text-base font-bold mb-4 px-3 py-2.5 rounded-xl tracking-wide leading-snug w-full"
+                      style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
+                      “{speechTargetText}”
+                    </p>
 
-            {progress && progress !== currentCh.instruction && (
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm mb-3"
-                style={{ background: "rgba(16,185,129,0.1)", color: "#34d399" }}>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-soft" />
-                {progress}
+                    {speechState === "recording" && (
+                      <div className="flex flex-col items-center mb-3">
+                        <p className="text-xs text-red-400 animate-pulse font-semibold">
+                          Dinleniyor... ({speechTimeLeft.toFixed(1)} sn)
+                        </p>
+                        {/* Audio Wave columns */}
+                        <div className="flex items-end gap-1 h-5 mt-1">
+                          {[1, 2, 3, 4, 3, 2, 1].map((bar, i) => (
+                            <div key={i} className="w-0.5 bg-red-400 rounded-full animate-bounce"
+                              style={{
+                                height: `${bar * 25}%`,
+                                animationDuration: `${0.5 + (i % 3) * 0.1}s`,
+                                animationDelay: `${i * 0.05}s`
+                              }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {speechState === "verifying" && (
+                      <div className="flex flex-col items-center justify-center py-2 mb-3">
+                        <div className="w-4 h-4 rounded-full border-2 border-t-indigo-500 animate-spin mb-1"
+                          style={{ borderColor: "rgba(255,255,255,0.06)", borderTopColor: "var(--accent)" }} />
+                        <p className="text-[10px] text-blue-400 animate-pulse font-semibold">
+                          Ses analiz ediliyor...
+                        </p>
+                      </div>
+                    )}
+
+                    {speechState === "success" && (
+                      <p className="text-xs font-semibold mb-3" style={{ color: "var(--success)" }}>
+                        Doğrulama Başarılı! ✓
+                      </p>
+                    )}
+
+                    {speechState === "failed" && (
+                      <p className="text-xs font-semibold mb-3" style={{ color: "var(--danger)" }}>
+                        Cümle eşleşmedi, tekrar deneyin. ✗
+                      </p>
+                    )}
+
+                    {/* Transkript Gösterimi (Transkript ekranın altında yazsın) */}
+                    {speechTranscript && (
+                      <div className="w-full text-left py-2 px-3 rounded-lg mb-3"
+                        style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)" }}>
+                        <span className="text-[9px] uppercase font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>Söylenen (Duyulan):</span>
+                        <p className="text-xs italic font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>“{speechTranscript}”</p>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="w-full flex flex-col gap-2">
+                      {speechState === "recording" ? (
+                        <button onClick={stopSpeechRecordingEarly}
+                          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white transition-all"
+                          style={{ background: "rgba(239,68,68,0.9)", cursor: "pointer" }}>
+                          Kaydı Tamamla
+                        </button>
+                      ) : (
+                        <button onClick={startSpeechRecording}
+                          disabled={speechState === "verifying" || speechState === "success"}
+                          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-all"
+                          style={{
+                            background: "linear-gradient(135deg, #059669, #10b981)",
+                            cursor: (speechState === "verifying" || speechState === "success") ? "not-allowed" : "pointer",
+                            opacity: (speechState === "verifying" || speechState === "success") ? 0.6 : 1
+                          }}>
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                          </svg>
+                          {speechState === "failed" ? "Tekrar Konuş" : "Konuşmaya Başla"}
+                        </button>
+                      )}
+
+                      {speechState !== "recording" && speechState !== "verifying" && speechState !== "success" && (
+                        <button onClick={handleSkipSpeech}
+                          className="w-full py-2 rounded-xl text-xs font-semibold transition-all border"
+                          style={{
+                            background: "var(--bg-elevated)",
+                            color: "var(--text-primary)",
+                            borderColor: "var(--border)",
+                            cursor: "pointer"
+                          }}>
+                          Şu an konuşamıyorum
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
+            ) : (
+              <>
+                <p className="font-semibold mb-4">{currentCh.instruction}</p>
+
+                {progress && progress !== currentCh.instruction && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm mb-3"
+                    style={{ background: "rgba(16,185,129,0.1)", color: "#34d399" }}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-soft" />
+                    {progress}
+                  </div>
+                )}
+              </>
             )}
 
-            {error && <p className="text-sm mt-2" style={{ color: "#fca5a5" }}>{error}</p>}
+            {error && currentCh.name !== "speech" && <p className="text-sm mt-2" style={{ color: "#fca5a5" }}>{error}</p>}
+            {error && currentCh.name === "speech" && speechState !== "recording" && <p className="text-xs mt-1.5 text-center" style={{ color: "#fca5a5" }}>{error}</p>}
 
             <div className="flex items-center justify-center gap-2 mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
               <span className="w-2 h-2 rounded-full" style={{ background: "#34d399" }} />
-              Kamera aktif — hareketi gerçekleştirin
+              {currentCh.name === "speech" ? "Mikrofon ve Kamera aktif" : "Kamera aktif — hareketi gerçekleştirin"}
             </div>
           </div>
         )}

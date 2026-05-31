@@ -88,6 +88,9 @@ class DeleteUserResponse(BaseModel):
 
 # ── Session ───────────────────────────────────────────────────────────────────
 
+class SessionCreateRequest(BaseModel):
+    exclude_speech: Optional[bool] = False
+
 class SessionCreateResponse(BaseModel):
     session_id: str
     challenges: List[str]

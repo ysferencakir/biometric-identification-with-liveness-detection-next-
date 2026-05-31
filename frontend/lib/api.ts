@@ -11,9 +11,21 @@ import type {
   UsersListResponse,
   VerifyRequest,
   VerifyResponse,
+  SpeechChallengeResponse,
+  SpeechLivenessResponse,
 } from "@/types/api";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const getBaseUrl = () => {
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+    // Map 'localhost' to '127.0.0.1' to avoid IPv6 (::1) resolution issues on Windows
+    const host = hostname === "localhost" ? "127.0.0.1" : hostname;
+    return `http://${host}:8000/api/v1`;
+  }
+  return "http://127.0.0.1:8000/api/v1";
+};
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || getBaseUrl();
 
 async function request<T>(
   path: string,
@@ -26,7 +38,19 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? "Bilinmeyen hata");
+    let msg = "Bilinmeyen hata";
+    if (err && err.detail) {
+      if (typeof err.detail === "string") {
+        msg = err.detail;
+      } else if (Array.isArray(err.detail)) {
+        msg = err.detail.map((d: any) => d.msg || JSON.stringify(d)).join(", ");
+      } else if (typeof err.detail === "object") {
+        msg = err.detail.message || JSON.stringify(err.detail);
+      } else {
+        msg = String(err.detail);
+      }
+    }
+    throw new Error(msg);
   }
 
   return res.json() as Promise<T>;
@@ -39,8 +63,11 @@ export const health = () =>
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-export const createSession = () =>
-  request<SessionCreateResponse>("/session/create", { method: "POST", body: "{}" });
+export const createSession = (excludeSpeech: boolean = false) =>
+  request<SessionCreateResponse>("/session/create", {
+    method: "POST",
+    body: JSON.stringify({ exclude_speech: excludeSpeech }),
+  });
 
 export const getSession = (sessionId: string) =>
   request<SessionStatusResponse>(`/session/${sessionId}`);
@@ -89,3 +116,38 @@ export const deleteUser = (userId: string) =>
   request<{ success: boolean; message: string }>(`/users/${userId}`, {
     method: "DELETE",
   });
+
+// ── Speech Liveness ───────────────────────────────────────────────────────────
+
+export const getSpeechChallenge = () =>
+  request<SpeechChallengeResponse>("/speech-liveness/challenge", { method: "POST" });
+
+export const verifySpeechLiveness = async (
+  challengeId: string,
+  audioBlob: Blob,
+  sessionId?: string
+): Promise<SpeechLivenessResponse> => {
+  const formData = new FormData();
+  formData.append("challenge_id", challengeId);
+  formData.append("audio_file", audioBlob, "recording.wav");
+  if (sessionId) {
+    formData.append("session_id", sessionId);
+  }
+
+  const res = await fetch(`${BASE_URL}/speech-liveness/verify`, {
+    method: "POST",
+    body: formData,
+    // Note: Do NOT set Content-Type header so the browser sets the multipart boundary automatically
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    let msg = "Bilinmeyen hata";
+    if (err && err.detail) {
+      msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+    }
+    throw new Error(msg);
+  }
+
+  return res.json() as Promise<SpeechLivenessResponse>;
+};

@@ -76,6 +76,38 @@ export default function TestUIPage() {
   const [fingerTarget,   setFingerTarget]   = useState<number | null>(null);
   const [fingerDetected, setFingerDetected] = useState<number | null>(null);
 
+  // Ses Liveness Test State'leri
+  const [speechChallengeId, setSpeechChallengeId] = useState("");
+  const [speechTargetText, setSpeechTargetText] = useState("");
+  const [speechTranscript, setSpeechTranscript] = useState("");
+  const [speechState, setSpeechState] = useState<"idle" | "loading" | "recording" | "verifying" | "success" | "failed">("idle");
+  const [speechTimeLeft, setSpeechTimeLeft] = useState(25.0);
+
+  const speechRecorderRef = useRef<MediaRecorder | null>(null);
+  const speechChunksRef = useRef<Blob[]>([]);
+  const speechTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speechStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const cleanupSpeechMedia = useCallback(() => {
+    if (speechTimerRef.current) {
+      clearInterval(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+    if (speechStreamRef.current) {
+      speechStreamRef.current.getTracks().forEach(track => track.stop());
+      speechStreamRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        // already stopped
+      }
+      recognitionRef.current = null;
+    }
+  }, []);
+
   const stopPolling = useCallback(() => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     sessionRef.current = "";
@@ -83,7 +115,11 @@ export default function TestUIPage() {
     setProgress("");
     setFingerTarget(null);
     setFingerDetected(null);
-  }, []);
+    cleanupSpeechMedia();
+    setSpeechState("idle");
+    setSpeechTargetText("");
+    setSpeechTranscript("");
+  }, [cleanupSpeechMedia]);
 
   useEffect(() => {
     api.getAvailableDetectors()
@@ -104,47 +140,194 @@ export default function TestUIPage() {
     return match ? parseInt(match[1], 10) : null;
   }
 
+  async function setupSpeechChallenge() {
+    setSpeechState("loading");
+    setSpeechTranscript("");
+    setError("");
+    setProgress("Cümle yükleniyor…");
+    try {
+      const res = await api.getSpeechChallenge();
+      setSpeechChallengeId(res.challenge_id);
+      setSpeechTargetText(res.target_text);
+      setSpeechState("idle");
+      setProgress("Lütfen aşağıdaki cümleyi sesli okuyun:");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cümle yüklenemedi.");
+      setSpeechState("idle");
+    }
+  }
+
+  async function startSpeechRecording() {
+    setError("");
+    cleanupSpeechMedia();
+    setSpeechState("recording");
+    setSpeechTimeLeft(25.0);
+    speechChunksRef.current = [];
+    setSpeechTranscript(""); // Clear old transcript
+
+    // Initialize Web Speech API for Real-Time feedback (WOW Factor)
+    try {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "tr-TR";
+        
+        rec.onresult = (event: any) => {
+          let interimTranscript = "";
+          let finalTranscript = "";
+          
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+          
+          const liveText = finalTranscript + interimTranscript;
+          if (liveText.trim()) {
+            setSpeechTranscript(liveText);
+          }
+        };
+        
+        recognitionRef.current = rec;
+        rec.start();
+      }
+    } catch (speechApiErr) {
+      console.warn("Web Speech API not supported or failed to initialize:", speechApiErr);
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      speechStreamRef.current = stream;
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      speechRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          speechChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(speechChunksRef.current, { type: "audio/webm" });
+        await handleVerifySpeech(audioBlob);
+      };
+
+      mediaRecorder.start();
+
+      const timer = setInterval(() => {
+        setSpeechTimeLeft((prev) => {
+          if (prev <= 0.1) {
+            clearInterval(timer);
+            if (mediaRecorder.state === "recording") {
+              mediaRecorder.stop();
+            }
+            return 0;
+          }
+          return Number((prev - 0.1).toFixed(1));
+        });
+      }, 100);
+      speechTimerRef.current = timer;
+
+    } catch (err) {
+      setError("Mikrofon izni alınamadı.");
+      setSpeechState("idle");
+      cleanupSpeechMedia();
+    }
+  }
+
+  function stopSpeechRecordingEarly() {
+    if (speechRecorderRef.current && speechRecorderRef.current.state === "recording") {
+      speechRecorderRef.current.stop();
+      setSpeechState("verifying");
+    }
+    cleanupSpeechMedia();
+  }
+
+  async function handleVerifySpeech(blob: Blob) {
+    setSpeechState("verifying");
+    setError("");
+    setProgress("Ses doğrulanıyor…");
+    const t0 = performance.now();
+    try {
+      const res = await api.verifySpeechLiveness(speechChallengeId, blob, sessionRef.current);
+      setSpeechTranscript(res.transcript);
+      const ms = Math.round(performance.now() - t0);
+      
+      if (res.success) {
+        setSpeechState("success");
+        setProgress("Başarılı! Canlılık doğrulandı.");
+        setTimeout(() => {
+          stopPolling();
+          setResults(prev => [{
+            challenge: "speech", passed: true,
+            confidence: res.similarity / 100.0, latencyMs: ms,
+            timestamp: new Date().toLocaleTimeString(),
+          }, ...prev.slice(0, 19)]);
+        }, 1500);
+      } else {
+        setSpeechState("failed");
+        setError("Cümle eşleşmedi, tekrar deneyin.");
+        setProgress("Eşleşme başarısız.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Doğrulama sunucu hatası.");
+      setSpeechState("failed");
+    }
+  }
+
   async function startTest() {
     if (running) { stopPolling(); return; }
     setError(""); setProgress("Session açılıyor…");
     setFingerTarget(null);
     setFingerDetected(null);
+    setSpeechState("idle");
+    setSpeechTargetText("");
+    setSpeechTranscript("");
 
     try {
       const sess = await api.createSession();
       sessionRef.current = sess.session_id;
       setRunning(true);
-      setProgress("Hareketi yapın…");
+      
+      if (selected === "speech") {
+        setupSpeechChallenge();
+      } else {
+        setProgress("Hareketi yapın…");
+        pollingRef.current = setInterval(async () => {
+          const frame = cameraRef.current?.capture();
+          if (!frame) return;
+          const t0 = performance.now();
+          try {
+            const res = await api.submitLiveness({ session_id: sessionRef.current, challenge_name: selected, frame });
+            const ms  = Math.round(performance.now() - t0);
+            const instr = res.instruction || "…";
+            setProgress(instr);
 
-      pollingRef.current = setInterval(async () => {
-        const frame = cameraRef.current?.capture();
-        if (!frame) return;
-        const t0 = performance.now();
-        try {
-          const res = await api.submitLiveness({ session_id: sessionRef.current, challenge_name: selected, frame });
-          const ms  = Math.round(performance.now() - t0);
-          const instr = res.instruction || "…";
-          setProgress(instr);
+            // Parmak sayma challenge için hedef/algılanan güncelle
+            if (selected === "finger_counting") {
+              const t = parseFingerTarget(instr);
+              const d = parseFingerDetected(instr);
+              if (t !== null) setFingerTarget(t);
+              if (d !== null) setFingerDetected(d);
+              if (instr === "Tamamlandi!") setFingerDetected(fingerTarget);
+            }
 
-          // Parmak sayma challenge için hedef/algılanan güncelle
-          if (selected === "finger_counting") {
-            const t = parseFingerTarget(instr);
-            const d = parseFingerDetected(instr);
-            if (t !== null) setFingerTarget(t);
-            if (d !== null) setFingerDetected(d);
-            if (instr === "Tamamlandi!") setFingerDetected(fingerTarget);
-          }
-
-          if (res.passed) {
-            stopPolling();
-            setResults(prev => [{
-              challenge: selected, passed: true,
-              confidence: res.confidence, latencyMs: ms,
-              timestamp: new Date().toLocaleTimeString(),
-            }, ...prev.slice(0, 19)]);
-          }
-        } catch (e) { setError(e instanceof Error ? e.message : "Hata"); stopPolling(); }
-      }, POLL_MS);
+            if (res.passed) {
+              stopPolling();
+              setResults(prev => [{
+                challenge: selected, passed: true,
+                confidence: res.confidence, latencyMs: ms,
+                timestamp: new Date().toLocaleTimeString(),
+              }, ...prev.slice(0, 19)]);
+            }
+          } catch (e) { setError(e instanceof Error ? e.message : "Hata"); stopPolling(); }
+        }, POLL_MS);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Session hatası"); setRunning(false); setProgress(""); }
   }
 
@@ -204,13 +387,104 @@ export default function TestUIPage() {
                       border: selected === ch ? "none" : "1px solid var(--border)",
                       boxShadow: selected === ch ? "0 2px 12px var(--accent-glow)" : "none",
                     }}>
-                    {ch === "finger_counting" ? "✋ " + ch : ch}
+                    {ch === "finger_counting" 
+                      ? "✋ " + ch 
+                      : ch === "new_blink" 
+                        ? "👁️✨ " + ch 
+                        : ch === "blink" 
+                          ? "👁️ " + ch 
+                          : ch === "speech"
+                            ? "🎙️ " + ch
+                            : ch}
                   </button>
                 ))}
                 {challenges.length === 0 && (
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>Backend&apos;e bağlanılamıyor…</p>
                 )}
               </div>
+
+              {/* Ses Canlılık Arayüzü (Test UI için Özel Bölüm) */}
+              {running && selected === "speech" && (
+                <div className="flex flex-col items-center py-3 px-1 border-t border-b mb-3" style={{ borderColor: "var(--border)" }}>
+                  {speechState === "loading" ? (
+                    <p className="text-xs pulse-soft py-2" style={{ color: "var(--text-muted)" }}>Cümle yükleniyor...</p>
+                  ) : (
+                    <div className="w-full text-center">
+                      <span className="text-[10px] font-bold tracking-wider text-gray-400 block mb-1">OKUNACAK CÜMLE:</span>
+                      <p className="text-xs md:text-sm font-bold p-2.5 rounded-xl mb-3 tracking-wide leading-snug"
+                        style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
+                        “{speechTargetText}”
+                      </p>
+
+                      {speechState === "recording" && (
+                        <div className="flex flex-col items-center mb-3">
+                          <p className="text-[11px] text-red-400 animate-pulse font-semibold">
+                            Dinleniyor... ({speechTimeLeft.toFixed(1)} sn)
+                          </p>
+                          <div className="flex items-end gap-1 h-4 mt-1">
+                            {[1, 2, 3, 4, 3, 2, 1].map((bar, i) => (
+                              <div key={i} className="w-0.5 bg-red-400 rounded-full animate-bounce"
+                                style={{
+                                  height: `${bar * 25}%`,
+                                  animationDuration: `${0.5 + (i % 3) * 0.1}s`,
+                                  animationDelay: `${i * 0.05}s`
+                                }} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {speechState === "verifying" && (
+                        <div className="flex items-center justify-center gap-1.5 py-1 mb-2">
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-t-indigo-500 animate-spin"
+                            style={{ borderColor: "rgba(255,255,255,0.06)", borderTopColor: "var(--accent)" }} />
+                          <span className="text-[11px] text-blue-400 font-semibold animate-pulse">Ses çözümleniyor...</span>
+                        </div>
+                      )}
+
+                      {speechState === "success" && (
+                        <p className="text-xs font-semibold mb-2" style={{ color: "var(--success)" }}>
+                          Doğrulama Başarılı! ✓
+                        </p>
+                      )}
+
+                      {speechState === "failed" && (
+                        <p className="text-xs font-semibold mb-2" style={{ color: "var(--danger)" }}>
+                          Cümle eşleşmedi, tekrar deneyin. ✗
+                        </p>
+                      )}
+
+                      {/* Transkript Gösterimi (Transkript ekranın altında yazsın) */}
+                      {speechTranscript && (
+                        <div className="text-left py-2 px-3 rounded-lg mb-3"
+                          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)" }}>
+                          <span className="text-[9px] uppercase font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>Söylenen (Duyulan):</span>
+                          <p className="text-xs italic font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>“{speechTranscript}”</p>
+                        </div>
+                      )}
+
+                      {speechState === "recording" ? (
+                        <button onClick={stopSpeechRecordingEarly}
+                          className="w-full py-2 rounded-xl text-xs font-semibold text-white mb-1"
+                          style={{ background: "rgba(239,68,68,0.9)", cursor: "pointer" }}>
+                          Kaydı Bitir
+                        </button>
+                      ) : (
+                        <button onClick={startSpeechRecording}
+                          disabled={speechState === "verifying" || speechState === "success"}
+                          className="w-full py-2 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1 mb-1"
+                          style={{
+                            background: "var(--accent)",
+                            cursor: (speechState === "verifying" || speechState === "success") ? "not-allowed" : "pointer",
+                            opacity: (speechState === "verifying" || speechState === "success") ? 0.6 : 1
+                          }}>
+                          🎙 {speechState === "failed" ? "Tekrar Konuş" : "Konuşmaya Başla"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {running && progress && (
                 <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-sm"

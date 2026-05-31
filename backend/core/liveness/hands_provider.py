@@ -28,6 +28,10 @@ try:
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
     logger.warning("MediaPipe not found. Install: pip install mediapipe")
+    class DummyVision:
+        class HandLandmarkerOptions:
+            pass
+    vision = DummyVision
 
 # ── Landmark indices ──────────────────────────────────────────────────────────
 WRIST = 0
